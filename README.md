@@ -66,7 +66,7 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | Runtime | Java 21 requerido | Sin runtime externo |
 | URI scheme | `afirma://` | `gdifirma://` (coexiste) |
 | Formatos | PAdES + CAdES + XAdES | PAdES |
-| Plataformas | Win / Mac / Linux | Windows V1, macOS Sprint 2 |
+| Plataformas | Win / Mac / Linux | Windows V1, macOS Sprint 3 |
 | UI | Java Swing | WPF nativo (tema oscuro) |
 | Visor PDF | Sí | No (está en el sistema de gestión) |
 | Licencia | EUPL 1.1 | AGPL v3 |
@@ -75,7 +75,7 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 
 ### Opción 1 — MSI (recomendado)
 
-Descargar `FirmadorGDI-x.x.x.msi` de [Releases](https://github.com/GDI-APGLv3/FirmadorGDI/releases) y ejecutar. No requiere permisos de administrador.
+Descargar `FirmadorGDI-x.x.x.msi` de [Releases](https://github.com/GDI-AGPLv3/FirmadorGDI/releases) y ejecutar. No requiere permisos de administrador.
 
 ### Opción 2 — Compilar desde fuente
 
@@ -85,7 +85,7 @@ Requiere Go 1.22+ y GCC (CGO).
 # Windows con scoop
 scoop install go gcc
 
-git clone https://github.com/GDI-APGLv3/FirmadorGDI
+git clone https://github.com/GDI-AGPLv3/FirmadorGDI
 cd FirmadorGDI
 
 CGO_ENABLED=1 go build -ldflags "-s -w -H windowsgui" -o firmadorgdi.exe ./cmd/firmadorgdi
@@ -98,7 +98,7 @@ CGO_ENABLED=1 go build -ldflags "-s -w -H windowsgui" -o firmadorgdi.exe ./cmd/f
 
 Compatible con @firma 1.9 — el mismo protocolo que usa AutoFirma España. El backend genera una URI `gdifirma://sign?...` que Chrome entrega al binario.
 
-Referencia técnica: ver [`docs/protocolo-afirma.md`](docs/protocolo-afirma.md) *(próximamente)*.
+Referencia técnica: `docs/protocolo-afirma.md` *(próximamente)*.
 
 ## Arquitectura interna
 
