@@ -75,7 +75,10 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 
 ### Opción 1 — MSI (recomendado)
 
-Descargar `FirmadorGDI-x.x.x.msi` de [Releases](https://github.com/GDI-AGPLv3/FirmadorGDI/releases) y ejecutar. No requiere permisos de administrador.
+**[⬇️ Descargar FirmadorGDI (.msi)](https://firmadorgdi.gdilatam.com/FirmadorGDI-latest.msi)** — y ejecutar. No requiere permisos de administrador.
+
+Ese enlace siempre entrega la última versión publicada. Guía de uso paso a paso:
+[docs.gdilatam.com — Firmar con token](https://docs.gdilatam.com/usuarios/documentos/firmar-con-token/).
 
 ### Opción 2 — Compilar desde fuente
 
