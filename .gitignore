@@ -50,3 +50,7 @@ installer/dialog.png
 
 # wrangler (artefactos locales de R2 upload)
 installer/.wrangler/
+
+# MSI compilado localmente (se publica a mano desde main; ver CLAUDE.md)
+installer/*.msi
+installer/*.wixpdb

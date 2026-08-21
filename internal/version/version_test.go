@@ -1,6 +1,7 @@
 package version
 
 import (
+	"encoding/xml"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -30,6 +31,23 @@ func TestLaVersionCoincideConLaDelInstalador(t *testing.T) {
 			"el instalador dice %s y el binario %s — se actualizan JUNTOS",
 			m[1], Version,
 		)
+	}
+}
+
+// El .wxs se edita a mano y un XML roto NO se nota hasta que alguien compila el
+// MSI — que es un paso manual y que puede pasar semanas después. Pasó: un
+// comentario metido entre los atributos de <Package> dejó el instalador sin
+// compilar, y el test de versión de arriba seguía verde porque lee con regex.
+func TestElInstaladorEsXMLValido(t *testing.T) {
+	ruta := filepath.Join("..", "..", "installer", "firmadorgdi.wxs")
+	contenido, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer %s: %v", ruta, err)
+	}
+
+	var v any
+	if err := xml.Unmarshal(contenido, &v); err != nil {
+		t.Fatalf("firmadorgdi.wxs no es XML válido — el MSI no va a compilar: %v", err)
 	}
 }
 
