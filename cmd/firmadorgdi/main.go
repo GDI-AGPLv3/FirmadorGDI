@@ -61,7 +61,11 @@ func main() {
 		ui.ShowInfoDialog("FirmadorGDI instalado", "gdifirma:// registrado correctamente.\nYa podés usar FirmadorGDI desde Chrome.")
 
 	case strings.HasPrefix(arg, uri.Scheme+"://"):
-		if err := handleSign(arg); err != nil {
+		// GDI-167: el mismo case atiende las dos operaciones. Se bifurca por el
+		// HOST de la URI (sign|batch), no por el `default` de más abajo: una URI
+		// gdifirma://batch entra igual por acá, así que cambiar el mensaje del
+		// default no serviría de nada.
+		if err := handleURI(arg); err != nil {
 			log.Println("ERROR:", err)
 			ui.ShowErrorDialog("Error al firmar", err.Error())
 		}
@@ -72,14 +76,22 @@ func main() {
 	}
 }
 
-func handleSign(rawURI string) error {
+// handleURI parsea y despacha: un documento o una tanda.
+func handleURI(rawURI string) error {
 	log.Println("URI recibida:", rawURI)
 
-	// 1. Parsear URI.
 	params, err := uri.Parse(rawURI)
 	if err != nil {
 		return fmt.Errorf("URI inválida: %w", err)
 	}
+
+	if params.Op == uri.OpBatch {
+		return handleBatch(params)
+	}
+	return handleSign(params)
+}
+
+func handleSign(params *uri.Params) error {
 	log.Printf("fileid=%s session=%s keystore=%s", params.FileID, params.SessionID, params.Keystore)
 
 	// 2. Buscar el XML envelope en el rtservlet.

@@ -19,6 +19,11 @@ type TokenInfo struct {
 	SerialNumber string // "CUIL 20123456789"
 	ValidUntil   string // "31/12/2030"
 	WrongPIN     bool   // true si el intento anterior falló
+	// GDI-167: cuántos documentos se van a firmar con este PIN. 0 o 1 = firma
+	// de a una y el diálogo no cambia. Con más, el cartel lo dice de frente:
+	// autorizar una tanda sin saber cuántos documentos incluye no es autorizar
+	// nada (condición D1-bis de la decisión que habilitó la feature).
+	BatchCount   int
 }
 
 // PINResult es lo que devuelve el diálogo.

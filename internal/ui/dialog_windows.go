@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"syscall"
 )
@@ -22,6 +23,7 @@ func ShowPINDialog(info TokenInfo) (PINResult, error) {
 		"AGDI_CUIL="+sanitize(info.SerialNumber),
 		"AGDI_VALID="+sanitize(info.ValidUntil),
 		"AGDI_WRONG_PIN="+boolStr(info.WrongPIN),
+		"AGDI_BATCH_COUNT="+strconv.Itoa(info.BatchCount),
 	)
 
 	cmd := exec.Command("powershell",
@@ -199,12 +201,21 @@ $manuf    = $env:AGDI_MANUFACTURER
 $cuil     = $env:AGDI_CUIL
 $valid    = $env:AGDI_VALID
 $wrongPin = $env:AGDI_WRONG_PIN -eq '1'
+$batch    = 0
+if ($env:AGDI_BATCH_COUNT) { $batch = [int]$env:AGDI_BATCH_COUNT }
 
 $tokenLine = if ($manuf) { "$label  ·  $manuf" } else { $label }
 
 $wrongPinXaml = ''
 if ($wrongPin) {
     $wrongPinXaml = '<TextBlock Margin="0,0,0,12" Foreground="#F87171" FontSize="13">PIN incorrecto. Intentá de nuevo.</TextBlock>'
+}
+
+# GDI-167: con una tanda, el diálogo dice CUÁNTOS documentos se firman con este
+# PIN. Sin eso el usuario estaría autorizando a ciegas.
+$batchXaml = ''
+if ($batch -gt 1) {
+    $batchXaml = '<Border Background="#164E63" CornerRadius="8" Padding="16,12" Margin="0,0,0,20"><StackPanel><TextBlock Foreground="#67E8F9" FontSize="11" FontWeight="SemiBold" Text="FIRMA EN TANDA"/><TextBlock Foreground="#F1F5F9" FontSize="15" FontWeight="SemiBold" Margin="0,4,0,0">Vas a firmar ' + $batch + ' documentos</TextBlock><TextBlock Foreground="#A5F3FC" FontSize="12" TextWrapping="Wrap" Margin="0,4,0,0">Con un solo PIN. Si alguno falla, no queda ninguno firmado.</TextBlock></StackPanel></Border>'
 }
 
 $validLine = ''
@@ -284,6 +295,7 @@ if ($valid) {
           $validLine
         </StackPanel>
       </Border>
+      $batchXaml
       $wrongPinXaml
       <TextBlock Text="PIN del token" Foreground="#94A3B8" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8"/>
       <PasswordBox x:Name="txtPin" Style="{StaticResource PinBox}" Margin="0,0,0,24"/>

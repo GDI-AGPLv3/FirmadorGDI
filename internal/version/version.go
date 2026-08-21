@@ -18,7 +18,7 @@ package version
 //
 // Semver simple: MAJOR.MINOR.PATCH. El instalador MSI de Windows exige tres
 // números y compara sus versiones campo por campo.
-const Version = "1.1.0"
+const Version = "1.2.0"
 
 // Nombre del producto tal como aparece en los diálogos y en el instalador.
 const Producto = "FirmadorGDI"

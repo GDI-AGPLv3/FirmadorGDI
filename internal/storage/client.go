@@ -104,3 +104,64 @@ func PostResult(stServlet, sessionID string, certDER, signedPDF []byte) error {
 func PostCancel(stServlet, sessionID string) error {
 	return Put(stServlet, sessionID, "CANCEL")
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GDI-167 — firma en tanda
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Manifest es la lista de documentos que el backend dejó para firmar de una vez.
+//
+//	<batch v="1_1" n="3"><d fileid="DATA…" id="SES…"/>…</batch>
+//
+// No trae los PDF: cada uno se baja después con FetchEnvelope, igual que en la
+// firma de a una. Meter los N PDF en un solo XML habría reventado por tamaño y
+// habría obligado a reescribir el envelope que ya funciona.
+type Manifest struct {
+	XMLName xml.Name       `xml:"batch"`
+	Version string         `xml:"v,attr"`
+	Count   int            `xml:"n,attr"`
+	Items   []ManifestItem `xml:"d"`
+}
+
+// ManifestItem es un documento de la tanda: dónde está su PDF y a qué sesión
+// hay que devolverle la firma.
+type ManifestItem struct {
+	FileID    string `xml:"fileid,attr"`
+	SessionID string `xml:"id,attr"`
+}
+
+// FetchManifest baja la lista de la tanda. Mismo camino que FetchEnvelope: el
+// servidor la devuelve en base64 porque empieza con "<".
+func FetchManifest(rtServlet, manifestID string) (*Manifest, error) {
+	raw, err := Get(rtServlet, manifestID)
+	if err != nil {
+		return nil, err
+	}
+
+	decoded, err := base64.StdEncoding.DecodeString(raw)
+	if err != nil {
+		return nil, fmt.Errorf("el retriever no devolvió base64 válido: %w", err)
+	}
+
+	var m Manifest
+	if err := xml.Unmarshal(decoded, &m); err != nil {
+		return nil, fmt.Errorf("XML malformado en el manifiesto: %w", err)
+	}
+	if len(m.Items) == 0 {
+		return nil, fmt.Errorf("el manifiesto no trae ningún documento")
+	}
+	if m.Count != 0 && m.Count != len(m.Items) {
+		// Si el manifiesto dice 5 y trae 3, algo se cortó en el camino. Firmar
+		// 3 creyendo que son 5 es justo lo que la tanda no puede hacer.
+		return nil, fmt.Errorf(
+			"el manifiesto dice %d documentos pero trae %d", m.Count, len(m.Items))
+	}
+	return &m, nil
+}
+
+// PostBatchStatus le avisa al backend cómo terminó la tanda, bajo el id del
+// lote. Es una red por si se pierde alguno de los avisos individuales: el
+// frontend puede cerrar igual sabiendo qué pasó.
+func PostBatchStatus(stServlet, batchID, estado string) error {
+	return Put(stServlet, batchID, estado)
+}
