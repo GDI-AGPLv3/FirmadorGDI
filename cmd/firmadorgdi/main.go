@@ -8,6 +8,10 @@
 // Modo instalación (registrar URI scheme, sin admin):
 //
 //	firmadorgdi.exe --register
+//
+// Ver qué versión está instalada:
+//
+//	firmadorgdi.exe --version
 package main
 
 import (
@@ -25,6 +29,7 @@ import (
 	"github.com/gdi-latam/firmadorgdi/internal/storage"
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
 	"github.com/gdi-latam/firmadorgdi/internal/uri"
+	"github.com/gdi-latam/firmadorgdi/internal/version"
 	"golang.org/x/sys/windows/registry"
 )
 
@@ -32,13 +37,23 @@ func main() {
 	setupLog()
 
 	if len(os.Args) < 2 {
-		ui.ShowInfoDialog("FirmadorGDI", "FirmadorGDI está instalado y listo.\n\nPara firmar documentos, ingresá a tu sistema desde el navegador y hacé clic en \"Firmar\".")
+		ui.ShowInfoDialog(version.Producto, fmt.Sprintf(
+			"FirmadorGDI %s está instalado y listo.\n\nPara firmar documentos, ingresá a tu sistema desde el navegador y hacé clic en \"Firmar\".",
+			version.Version,
+		))
 		os.Exit(0)
 	}
 
 	arg := os.Args[1]
 
 	switch {
+	// GDI-341: sin esto no había forma de saber qué versión tiene instalada un
+	// municipio. Va a stdout —no a un diálogo— para poder leerlo por consola o
+	// desde un script de soporte.
+	case arg == "--version" || arg == "-v":
+		fmt.Printf("%s %s\n", version.Producto, version.Version)
+		os.Exit(0)
+
 	case arg == "--register":
 		if err := registerURIScheme(); err != nil {
 			log.Fatal("ERROR registrando scheme:", err)
@@ -198,4 +213,8 @@ func setupLog() {
 	}
 	log.SetOutput(f)
 	log.SetFlags(log.Ldate | log.Ltime)
+	// GDI-341: la primera línea de cada corrida dice la versión. Cuando alguien
+	// manda este log para reportar un problema, deja de hacer falta preguntarle
+	// qué versión tiene.
+	log.Printf("=== %s %s ===", version.Producto, version.Version)
 }
