@@ -7,38 +7,39 @@ import (
 	"syscall"
 )
 
-// engancharConsola conecta la salida del programa a la consola desde la que lo
-// llamaron, si es que lo llamaron desde una.
+// engancharConsola intenta darle al programa un lugar donde escribir.
 //
-// Hace falta porque el binario se compila con `-H windowsgui`: eso evita que se
-// abra una ventana negra cada vez que Chrome lanza el firmador para firmar
-// —que es el caso normal y sería horrible—, pero tiene un costo: Windows NO le
-// da consola al proceso, así que un `fmt.Printf` no se ve en ningún lado.
+// El binario se compila con `-H windowsgui`: sin eso, Chrome abriría una ventana
+// negra en CADA firma, que es el caso normal y sería horrible. El costo es que
+// Windows no le da consola al proceso, así que un `fmt.Printf` no se ve.
 //
-// Resultado: `firmadorgdi.exe --version` se ejecutaba, salía bien… y no
-// imprimía nada. La versión, que es justamente lo que GDI-341 vino a poder
-// consultar, seguía sin poder consultarse.
+// Devuelve true si quedó una salida utilizable.
 //
-// ATTACH_PARENT_PROCESS le pide a Windows la consola del proceso que lo lanzó.
-// Si no hay ninguna (Chrome, el Explorador, un doble clic), falla en silencio y
-// el programa sigue igual que siempre: esto solo agrega salida cuando hay dónde
-// escribirla.
-func engancharConsola() {
+// ⚠️ Si ya HAY una salida válida —o sea, alguien redirigió a un archivo o a una
+// tubería— no se toca nada. Una primera versión de esto enganchaba la consola
+// siempre y pisaba `os.Stdout`, con lo cual `--version > version.txt` dejaba el
+// archivo vacío: se rompía justamente el uso que más importa, el del script de
+// soporte que quiere capturar la versión.
+func engancharConsola() bool {
+	// ¿Ya hay dónde escribir? Con -H windowsgui y sin redirección, Stat() falla.
+	if fi, err := os.Stdout.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
+		return true // archivo o tubería: respetarlo
+	}
+
 	const attachParentProcess = ^uintptr(0) // (DWORD)-1
 
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	attach := kernel32.NewProc("AttachConsole")
 
-	ok, _, _ := attach.Call(attachParentProcess)
-	if ok == 0 {
-		return // no nos llamaron desde una consola: no hay nada que hacer
+	if ok, _, _ := attach.Call(attachParentProcess); ok == 0 {
+		return false // nos abrieron con doble clic: no hay consola de nadie
 	}
 
-	// Reabrir los descriptores estándar apuntando a la consola recién
-	// enganchada. Sin esto, el runtime de Go sigue escribiendo a los handles
-	// vacíos con los que arrancó.
-	if salida, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0); err == nil {
-		os.Stdout = salida
-		os.Stderr = salida
+	salida, err := os.OpenFile("CONOUT$", os.O_WRONLY, 0)
+	if err != nil {
+		return false
 	}
+	os.Stdout = salida
+	os.Stderr = salida
+	return true
 }

@@ -3,5 +3,5 @@
 package main
 
 // En las plataformas que no son Windows el binario no se compila con
-// `-H windowsgui`, asi que la salida estandar funciona sola.
-func engancharConsola() {}
+// `-H windowsgui`, asi que la salida estandar siempre funciona.
+func engancharConsola() bool { return true }
