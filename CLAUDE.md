@@ -68,9 +68,26 @@ que el binario lo diga.
 4. Tag: `git tag -a v1.1.0 -m "…"` y push del tag. El tag es lo que ata el MSI
    publicado a un commit exacto; sin él, "la versión que está en producción" no
    es una pregunta con respuesta.
-5. Compilar el MSI y publicarlo como `FirmadorGDI-latest.msi`
+5. Compilar el MSI:
+
+   ```
+   go build -ldflags="-H windowsgui -s -w" -o firmadorgdi.exe ./cmd/firmadorgdi
+   cd installer
+   wix build firmadorgdi.wxs -ext WixToolset.UI.wixext -o FirmadorGDI-<version>.msi
+   ```
+
+   ⚠️ **Verificar que NO quede un `cab1.cab` al lado del `.msi`.** Si queda, el
+   instalador publicado no sirve: al ejecutarlo pide *"Source file not found:
+   cab1.cab"*. Lo garantiza `<MediaTemplate EmbedCab="yes" />` en el `.wxs`, y
+   hay un test que lo exige (`internal/version/version_test.go`). Pasó de verdad
+   al compilar la 1.2.0: el `.wxs` nunca lo había declarado.
+
+6. Publicarlo como `FirmadorGDI-latest.msi`
    (`https://firmadorgdi.gdilatam.com/FirmadorGDI-latest.msi`, que es el link que
    muestra el frontend al firmar).
+
+**No hay que desinstalar la versión anterior:** el `UpgradeCode` es fijo y el
+`.wxs` declara `MajorUpgrade`, así que Windows reemplaza sola la que esté.
 
 **Un solo MSI publicado**, sin alias `-dev` ni `-hml` (decisión de Santiago,
 20/08/2026): para probar un cambio se compila local y se instala a mano. Mantener

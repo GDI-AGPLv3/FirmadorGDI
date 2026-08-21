@@ -15,6 +15,13 @@
 
     <MajorUpgrade DowngradeErrorMessage="Ya tenés una versión más nueva de FirmadorGDI instalada." />
 
+    <!-- GDI-341: los archivos van ADENTRO del .msi.
+         Sin esto WiX los deja en un `cab1.cab` al lado, y el instalador solo no
+         sirve para nada: al ejecutarlo pide "Source file not found: cab1.cab".
+         Como el MSI se publica copiando UN archivo a R2, un cab externo
+         garantiza que lo publicado no instale. -->
+    <MediaTemplate EmbedCab="yes" />
+
     <StandardDirectory Id="ProgramFilesFolder">
       <Directory Id="INSTALLFOLDER" Name="FirmadorGDI" />
     </StandardDirectory>

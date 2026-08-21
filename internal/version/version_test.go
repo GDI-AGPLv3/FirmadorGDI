@@ -51,6 +51,26 @@ func TestElInstaladorEsXMLValido(t *testing.T) {
 	}
 }
 
+// El MSI se publica copiando UN archivo a R2. Si WiX deja los archivos en un
+// .cab externo, lo publicado NO INSTALA: al ejecutarlo pide "Source file not
+// found: cab1.cab". Pasó al compilar 1.2.0 — el .wxs nunca había declarado
+// dónde iban los archivos, así que el instalador que se venía publicando tiene
+// el mismo problema.
+func TestElInstaladorEmbebeSusArchivos(t *testing.T) {
+	ruta := filepath.Join("..", "..", "installer", "firmadorgdi.wxs")
+	contenido, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer %s: %v", ruta, err)
+	}
+
+	if !regexp.MustCompile(`EmbedCab\s*=\s*"yes"`).Match(contenido) {
+		t.Error(
+			"firmadorgdi.wxs no declara MediaTemplate EmbedCab=\"yes\": el MSI va " +
+				"a salir con un .cab al lado y, publicado solo, no instala nada",
+		)
+	}
+}
+
 func TestLaVersionEsSemver(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`).MatchString(Version) {
 		t.Errorf("versión %q: el MSI de Windows exige MAJOR.MINOR.PATCH", Version)
