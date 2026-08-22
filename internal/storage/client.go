@@ -11,9 +11,43 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gdi-latam/firmadorgdi/internal/version"
 )
 
-var httpClient = &http.Client{Timeout: 30 * time.Second}
+// HeaderVersion es donde viaja la versión del firmador en cada pedido.
+//
+// Por qué existe: no hay auto-update ni telemetría, y hasta acá el binario NO le
+// decía su versión a nadie — solo la escribía en el log de su propia máquina.
+// Con un solo MSI publicado y sin forma de preguntar, saber qué versión corre un
+// municipio era imposible: cualquier reporte de error empezaba por adivinar.
+//
+// Va SOLO la versión. Nada del equipo, del usuario ni del token: alcanza para
+// saber quién quedó atrás y para avisarle, y no hay razón para mandar más.
+const HeaderVersion = "X-FirmadorGDI-Version"
+
+// agregaLaVersion la mete en todos los pedidos sin tener que acordarse en cada
+// llamada. Va como header propio y también en el User-Agent, porque algún proxy
+// municipal podría pisar uno de los dos.
+type agregaLaVersion struct {
+	base http.RoundTripper
+}
+
+func (t agregaLaVersion) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Set(HeaderVersion, version.Version)
+	req.Header.Set("User-Agent", version.Producto+"/"+version.Version)
+
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	return base.RoundTrip(req)
+}
+
+var httpClient = &http.Client{
+	Timeout:   30 * time.Second,
+	Transport: agregaLaVersion{},
+}
 
 // Put sube datos al storage. Devuelve error si la respuesta no es "OK".
 func Put(endpoint, id, dat string) error {

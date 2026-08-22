@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gdi-latam/firmadorgdi/internal/version"
 )
 
 // servidorQueDevuelve levanta un retriever de mentira que contesta siempre lo
@@ -97,5 +99,38 @@ func TestNoSeBajaMasDeLTecho(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "MB") {
 		t.Errorf("el error no dice que se pasó de tamaño: %v", err)
+	}
+}
+
+// Sin esto no hay forma de saber qué versión corre un municipio: no hay
+// auto-update ni telemetría, y el binario solo escribía su versión en el log de
+// su propia máquina. El servidor la usa para avisarle al funcionario que tiene
+// una versión vieja, que es todo el mecanismo de actualización que existe.
+func TestCadaPedidoDiceQueVersionEs(t *testing.T) {
+	var recibidoHeader, recibidoUA string
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		recibidoHeader = r.Header.Get(HeaderVersion)
+		recibidoUA = r.Header.Get("User-Agent")
+		fmt.Fprint(w, "OK")
+	}))
+	defer s.Close()
+
+	if err := Put(s.URL, "SES1", "datos"); err != nil {
+		t.Fatalf("el PUT falló: %v", err)
+	}
+	if recibidoHeader != version.Version {
+		t.Errorf("el header dijo %q y la versión es %q", recibidoHeader, version.Version)
+	}
+	if !strings.Contains(recibidoUA, version.Version) {
+		t.Errorf("el User-Agent no lleva la versión: %q", recibidoUA)
+	}
+
+	// Y también en el GET, que es el primer contacto con el servidor: es el que
+	// permite avisar ANTES de que el funcionario ponga el PIN.
+	recibidoHeader = ""
+	_, _ = Get(s.URL, "SES1")
+	if recibidoHeader != version.Version {
+		t.Errorf("el GET no mandó la versión: %q", recibidoHeader)
 	}
 }
