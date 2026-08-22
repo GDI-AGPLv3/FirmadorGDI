@@ -113,8 +113,37 @@ que el binario lo diga.
 tres instaladores publicados para un binario que no cambia entre ambientes es
 trabajo sin beneficio.
 
+## Cómo se entera un municipio de que hay versión nueva (GDI-341)
+
+**No hay auto-update.** El programa no consulta si hay versión nueva, no la baja
+y no avisa por sí mismo. Lo que hay, desde la 1.3.0, es esto:
+
+1. El firmador manda su versión en **cada pedido** al servidor
+   (`X-FirmadorGDI-Version`, en `internal/storage/client.go` — se agrega con un
+   RoundTripper, así vale para todas las llamadas).
+2. El backend la guarda (`digital_signature_sessions.client_version`, migración
+   113) y la compara contra `FIRMADOR_VERSION_MINIMA` (`config/constants.py`).
+3. La pantalla de firma le muestra el cartel con el link de descarga.
+
+Va **solo la versión**: nada del equipo, del usuario ni del token.
+
+**Cuándo subir `FIRMADOR_VERSION_MINIMA`**: cuando la versión nueva trae algo que
+de verdad importa —un arreglo de seguridad, un cambio de protocolo que rompe— y
+**no en cada release**. Es una variable de entorno, se mueve sin deploy. Un aviso
+permanente que el funcionario no puede sacarse de encima se vuelve parte del
+paisaje y deja de leerse.
+
+> ⚠️ Nunca la pongas por encima de la versión que está publicada: todos verían un
+> cartel pidiendo algo que no se puede descargar. Hay un test que lo impide
+> (`GDI-Backend/tests/test_gdi341_version_del_firmador.py`), pero solo corre si
+> los dos repos están uno al lado del otro.
+
 ## Fuera de alcance (a propósito)
 
+- **Auto-update de verdad**: instalar software en una máquina municipal suele
+  pedir permisos de administrador, y sin firma Authenticode Windows muestra su
+  advertencia en cada actualización. Con el aviso de arriba se cubre el 90% del
+  problema a una fracción del costo.
 - **CI en GitHub Actions**: hoy el MSI se compila a mano. Vale la pena cuando
   haya releases seguidas, no antes.
 - **Firma Authenticode del ejecutable**: hace falta un certificado de firma de
