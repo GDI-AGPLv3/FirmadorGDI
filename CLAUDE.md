@@ -18,6 +18,18 @@ Consecuencia práctica: **el mismo MSI sirve para los tres ambientes**. Un
 funcionario instala una vez y firma contra DEV, HML o PRD según desde dónde
 haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 
+> ⚠️ Agnóstico del ambiente **no** quiere decir que acepte cualquier servidor.
+> `DominiosPermitidos` (en `internal/uri/parse.go`) es la lista de hosts a los
+> que el programa le obedece: `*.gdilatam.com`, `*.fly.dev` y local. Existe
+> porque, una vez instalado, **cualquier página que el funcionario abra puede
+> lanzar un `gdifirma://`** — y las URLs del servidor viajan dentro del link.
+> Sin la lista, un link ajeno lograba que el token firmara documentos que el
+> funcionario nunca vio, y con el modo lote son cinco por un solo PIN.
+>
+> Una instalación on-premise con dominio propio **necesita que se agregue el
+> suyo a esa lista y se compile una versión nueva**. No se lee de configuración
+> local a propósito: quien puede escribir ese archivo podría autorizarse solo.
+
 > ⚠️ El parámetro `ver` se parsea pero **nunca se valida** (`validate()` no lo
 > mira). Subirlo a `1_1` no rompe nada por sí solo — hay que tenerlo presente
 > antes de asumir que un cliente viejo va a rechazar una URI nueva: no lo hace.
@@ -50,8 +62,15 @@ La versión se ve en tres lugares, y eso es el punto de GDI-341 —antes no se v
 en ninguno—:
 
 ```
-firmadorgdi.exe --version     # FirmadorGDI 1.1.0
+firmadorgdi.exe --version     # FirmadorGDI 1.2.0
 ```
+
+> ⚠️ Eso funciona **solo porque `main()` llama a `engancharConsola()` antes de
+> imprimir**. Con `-H windowsgui` Windows no le da consola al proceso y el
+> `Printf` escribe en un handle vacío. La función estuvo escrita —y dada por
+> funcionando en dos commits— sin que nadie la invocara: `--version` no imprimía
+> una sola línea. Hay un test que ahora exige la llamada
+> (`cmd/firmadorgdi/main_test.go`); si alguien la saca, el test avisa.
 
 - el diálogo que aparece al abrirlo sin argumentos,
 - la primera línea de `%TEMP%\firmadorgdi.log`, en cada corrida.
