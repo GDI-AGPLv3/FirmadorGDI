@@ -94,7 +94,7 @@ func handleBatch(params *uri.Params) error {
 		if err := firmarUno(params, item, cert, certDER, token); err != nil {
 			// ⚠️ Acá se corta. No se sigue con los que faltan.
 			log.Printf("tanda: FALLÓ el documento %d de %d: %v", i+1, total, err)
-			cancelarTandaEntera(params, manifest, fmt.Sprintf("documento %d", i+1))
+			cancelarTandaEntera(params, manifest, fmt.Sprintf("documento %d", i+1), batchFailed)
 			return fmt.Errorf(
 				"falló el documento %d de %d (%v).\n\n"+
 					"Ninguno de los %d quedó firmado y los números vuelven al "+
@@ -121,22 +121,22 @@ func loginConReintentos(
 	for intento := 1; intento <= maxPINRetries; intento++ {
 		result, dlgErr := ui.ShowPINDialog(dlgInfo)
 		if errors.Is(dlgErr, ui.ErrCancelled) {
-			cancelarTandaEntera(params, manifest, "cancelado en el PIN")
+			cancelarTandaEntera(params, manifest, "cancelado en el PIN", batchCancel)
 			return fmt.Errorf("el usuario canceló la firma")
 		}
 		if dlgErr != nil {
-			cancelarTandaEntera(params, manifest, "error del diálogo")
+			cancelarTandaEntera(params, manifest, "error del diálogo", batchFailed)
 			return fmt.Errorf("no se pudo mostrar el diálogo de PIN: %w", dlgErr)
 		}
 		if result.PIN == "" {
-			cancelarTandaEntera(params, manifest, "PIN vacío")
+			cancelarTandaEntera(params, manifest, "PIN vacío", batchFailed)
 			return fmt.Errorf("PIN vacío recibido del diálogo")
 		}
 
 		if loginErr := token.Login(result.PIN); loginErr != nil {
 			log.Printf("Login intento %d: %v", intento, loginErr)
 			if errors.Is(loginErr, pkcs11.ErrTokenLocked) {
-				cancelarTandaEntera(params, manifest, "token bloqueado")
+				cancelarTandaEntera(params, manifest, "token bloqueado", batchFailed)
 				return fmt.Errorf("token bloqueado — demasiados PINs incorrectos")
 			}
 			dlgInfo.WrongPIN = true
@@ -145,7 +145,7 @@ func loginConReintentos(
 		return nil
 	}
 
-	cancelarTandaEntera(params, manifest, "máximo de intentos")
+	cancelarTandaEntera(params, manifest, "máximo de intentos", batchCancel)
 	return fmt.Errorf("máximo de intentos alcanzado")
 }
 
@@ -212,16 +212,14 @@ func firmarUno(
 //
 // Todo best-effort: si algún aviso no llega, el servidor la deja caer sola por
 // vencimiento. Un aviso perdido no puede impedir los demás.
-func cancelarTandaEntera(params *uri.Params, manifest *storage.Manifest, motivo string) {
+func cancelarTandaEntera(
+	params *uri.Params, manifest *storage.Manifest, motivo string, estado string,
+) {
 	log.Printf("tanda: cancelando las %d sesiones (%s)", len(manifest.Items), motivo)
 	for _, item := range manifest.Items {
 		if err := storage.PostCancel(params.StServlet, item.SessionID); err != nil {
 			log.Printf("tanda: no se pudo cancelar %s: %v", item.SessionID, err)
 		}
-	}
-	estado := batchFailed
-	if motivo == "cancelado en el PIN" {
-		estado = batchCancel
 	}
 	_ = storage.PostBatchStatus(params.StServlet, params.SessionID, estado)
 }

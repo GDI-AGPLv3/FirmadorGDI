@@ -72,11 +72,73 @@ func Parse(raw string) (*Params, error) {
 	return p, nil
 }
 
-// isAllowedServletURL permite HTTPS en producción y HTTP localhost para pruebas locales.
+// DominiosPermitidos son los únicos servidores a los que este programa le
+// obedece. Se comparan contra el host; un sufijo que arranca con "." matchea el
+// dominio pelado y todos sus subdominios.
+//
+// ── Por qué existe esta lista ────────────────────────────────────────────────
+//
+// Al instalarse, el programa queda registrado como el que atiende gdifirma://.
+// Desde ese momento CUALQUIER página que el funcionario abra puede lanzar un
+// link de esos, no solo la del municipio: un mail, un aviso, una web cualquiera.
+// Y las URLs del servidor viajan DENTRO del link.
+//
+// Sin esta lista, un link armado por otro decía "bajate estos documentos de mi
+// servidor y mandame las firmas a mi servidor". El funcionario veía el diálogo
+// del PIN de siempre, lo escribía, y firmaba con su token documentos que nunca
+// vio. Con la tanda son cinco firmas por un solo PIN en lugar de una.
+//
+// Que la lista sea pública no la debilita: no protege por ser secreta, protege
+// porque el programa se niega a hablar con cualquier otro.
+//
+// ── Lo que NO cambia ─────────────────────────────────────────────────────────
+//
+// El binario sigue siendo agnóstico del ambiente: DEV, HML y PRD viven todos
+// bajo estos dominios, así que un mismo MSI sigue sirviendo para los tres. Esa
+// propiedad —la razón por la que las URLs viajan en la URI en vez de estar
+// compiladas— se conserva entera.
+//
+// ⚠️ Una instalación on-premise con dominio propio queda afuera y necesita que
+// se agregue el suyo acá, en una versión nueva. Es el costo asumido: leerlo de
+// un archivo de configuración local volvería a abrir la puerta, porque quien
+// puede escribir ese archivo puede autorizarse a sí mismo.
+var DominiosPermitidos = []string{
+	".gdilatam.com",
+	".fly.dev",
+	"localhost",
+	"127.0.0.1",
+}
+
+// isAllowedServletURL exige HTTPS —o HTTP solo contra local— y que el host esté
+// en la lista de arriba.
 func isAllowedServletURL(u string) bool {
-	return strings.HasPrefix(u, "https://") ||
-		strings.HasPrefix(u, "http://localhost") ||
-		strings.HasPrefix(u, "http://127.0.0.1")
+	parsed, err := url.Parse(u)
+	if err != nil {
+		return false
+	}
+
+	host := parsed.Hostname()
+	if host == "" {
+		return false
+	}
+
+	esLocal := host == "localhost" || host == "127.0.0.1"
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && esLocal) {
+		return false
+	}
+
+	for _, permitido := range DominiosPermitidos {
+		if strings.HasPrefix(permitido, ".") {
+			if strings.HasSuffix(host, permitido) || host == permitido[1:] {
+				return true
+			}
+			continue
+		}
+		if host == permitido {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Params) validate() error {

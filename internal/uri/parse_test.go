@@ -1,6 +1,9 @@
 package uri
 
-import "testing"
+import (
+	"net/url"
+	"testing"
+)
 
 const servlet = "https%3A%2F%2Fgdi-backend-dev.fly.dev%2Fdigital-signature%2Fstorage"
 
@@ -104,5 +107,57 @@ func TestServletTieneQueSerHTTPS(t *testing.T) {
 		"&id=BATABC&keystore=PKCS11"
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("aceptó un servlet en HTTP plano")
+	}
+}
+
+// El programa queda registrado como el que atiende gdifirma://, así que
+// cualquier página que el funcionario abra puede lanzarle un link. Las URLs del
+// servidor viajan adentro. Sin lista de dominios, un link ajeno conseguía que
+// el token firmara documentos que el funcionario nunca vio — y con la tanda,
+// cinco por un solo PIN.
+func TestSoloSeLeObedeceALosDominiosPropios(t *testing.T) {
+	base := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11"
+
+	permitidos := []string{
+		"https://gdi-backend-dev.fly.dev",
+		"https://api.gdilatam.com",
+		"https://gdilatam.com",
+		"http://localhost:8000",
+		"http://127.0.0.1:8000",
+	}
+	for _, servlet := range permitidos {
+		raw := base + "&rtservlet=" + url.QueryEscape(servlet) +
+			"&stservlet=" + url.QueryEscape(servlet)
+		if _, err := Parse(raw); err != nil {
+			t.Errorf("rechazó un servidor propio %q: %v", servlet, err)
+		}
+	}
+
+	ajenos := []string{
+		"https://evil.com",
+		"https://gdilatam.com.evil.com",     // el sufijo pegado a otro dominio
+		"https://evil.com/?x=gdilatam.com",  // el nombre propio en el path
+		"https://fly.dev.attacker.net",
+		"http://gdilatam.com",               // sin TLS y no es local
+		"https://192.168.1.50",
+	}
+	for _, servlet := range ajenos {
+		raw := base + "&rtservlet=" + url.QueryEscape(servlet) +
+			"&stservlet=" + url.QueryEscape(servlet)
+		if _, err := Parse(raw); err == nil {
+			t.Errorf("aceptó un servidor ajeno: %q", servlet)
+		}
+	}
+}
+
+// La tanda entra por el mismo control: es donde más duele, porque son N firmas
+// con un solo PIN.
+func TestLaTandaTambienExigeDominioPropio(t *testing.T) {
+	raw := "gdifirma://batch?ver=1_1&manifest=MAN1&id=BAT1&keystore=PKCS11" +
+		"&rtservlet=" + url.QueryEscape("https://evil.com") +
+		"&stservlet=" + url.QueryEscape("https://evil.com")
+
+	if _, err := Parse(raw); err == nil {
+		t.Fatal("una tanda contra un servidor ajeno pasó el control")
 	}
 }

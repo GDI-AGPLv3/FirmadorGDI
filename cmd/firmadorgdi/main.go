@@ -51,6 +51,20 @@ func main() {
 	// municipio. Va a stdout —no a un diálogo— para poder leerlo por consola o
 	// desde un script de soporte.
 	case arg == "--version" || arg == "-v":
+		// engancharConsola() PRIMERO. El binario se compila con -H windowsgui
+		// —para que Chrome no abra una ventana negra en cada firma— y entonces
+		// Windows no le da consola: este Printf escribiría en un handle vacío.
+		//
+		// La función existía desde el commit que dio esto por resuelto, pero
+		// nunca se la llamaba desde ningún lado, así que `--version` seguía sin
+		// imprimir una sola línea. Santiago lo reportó y se atribuyó al shell.
+		if !engancharConsola() {
+			// Doble clic: no hay consola de nadie ni redirección. El único
+			// lugar donde se puede mostrar algo es un diálogo.
+			ui.ShowInfoDialog(version.Producto,
+				fmt.Sprintf("%s %s", version.Producto, version.Version))
+			os.Exit(0)
+		}
 		fmt.Printf("%s %s\n", version.Producto, version.Version)
 		os.Exit(0)
 
