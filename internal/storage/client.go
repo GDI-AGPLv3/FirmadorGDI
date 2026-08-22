@@ -31,6 +31,22 @@ func Put(endpoint, id, dat string) error {
 	return nil
 }
 
+// MaxDescargaBytes es el techo de lo que se acepta bajar del servidor de una vez.
+//
+// No es un límite de negocio: un PDF municipal pesa unos pocos MB y el
+// manifiesto son bytes. Es un freno para que un servidor hostil —o uno propio
+// que se volvió loco— no pueda agotar la memoria de la máquina del funcionario
+// mandando un cuerpo interminable.
+const MaxDescargaBytes = 50 << 20 // 50 MB
+
+// MaxDocumentosManifiesto es el techo de documentos que se aceptan en una tanda.
+//
+// La tanda real son 5, y eso lo fijan el backend y el frontend. Esto es la red
+// de más abajo: sin ella, un manifiesto que declare n=1000000 hace que el
+// diálogo pida confirmar un millón de firmas y, si alguien acepta, el programa
+// entra en un loop del que no vuelve.
+const MaxDocumentosManifiesto = 50
+
 // Get recupera datos del storage. Devuelve el body tal cual.
 func Get(endpoint, id string) (string, error) {
 	resp, err := httpClient.PostForm(endpoint, url.Values{
@@ -43,8 +59,19 @@ func Get(endpoint, id string) (string, error) {
 	if resp.StatusCode == 404 {
 		return "", fmt.Errorf("GET %s: no encontrado (sesión expiró o id inválido)", id)
 	}
-	body, err := io.ReadAll(resp.Body)
-	return strings.TrimSpace(string(body)), err
+	// LimitReader con un byte de más: si lo alcanza, es que el cuerpo se pasaba
+	// del techo y hay que cortar en vez de devolver 50 MB truncados como si
+	// fueran el documento entero.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxDescargaBytes+1))
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", id, err)
+	}
+	if len(body) > MaxDescargaBytes {
+		return "", fmt.Errorf(
+			"GET %s: el servidor mandó más de %d MB — descarte por las dudas",
+			id, MaxDescargaBytes>>20)
+	}
+	return strings.TrimSpace(string(body)), nil
 }
 
 // Envelope es el XML que el backend pone en storage para AutoFirmaGDI.
@@ -149,6 +176,14 @@ func FetchManifest(rtServlet, manifestID string) (*Manifest, error) {
 	}
 	if len(m.Items) == 0 {
 		return nil, fmt.Errorf("el manifiesto no trae ningún documento")
+	}
+	// Se chequean los dos: el declarado y el real. Si solo se mirara el real,
+	// un n=1000000 con 3 items pasaría el filtro y llegaría al diálogo, que es
+	// donde el número se le muestra al funcionario.
+	if m.Count > MaxDocumentosManifiesto || len(m.Items) > MaxDocumentosManifiesto {
+		return nil, fmt.Errorf(
+			"el manifiesto pide firmar %d documentos y el máximo es %d",
+			max(m.Count, len(m.Items)), MaxDocumentosManifiesto)
 	}
 	if m.Count != 0 && m.Count != len(m.Items) {
 		// Si el manifiesto dice 5 y trae 3, algo se cortó en el camino. Firmar
