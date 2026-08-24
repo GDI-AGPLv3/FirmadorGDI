@@ -122,7 +122,7 @@ y no avisa por sí mismo. Lo que hay, desde la 1.3.0, es esto:
    (`X-FirmadorGDI-Version`, en `internal/storage/client.go` — se agrega con un
    RoundTripper, así vale para todas las llamadas).
 2. El backend la guarda (`digital_signature_sessions.client_version`, migración
-   113) y la compara contra `FIRMADOR_VERSION_MINIMA` (`config/constants.py`).
+   119) y la compara contra `FIRMADOR_VERSION_MINIMA` (`config/constants.py`).
 3. La pantalla de firma le muestra el cartel con el link de descarga.
 
 Va **solo la versión**: nada del equipo, del usuario ni del token.
