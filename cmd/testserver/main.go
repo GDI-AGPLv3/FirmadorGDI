@@ -1,53 +1,47 @@
-// testserver — servidor local que simula rtservlet + stservlet del protocolo @firma.
+// testserver — servidor local que simula rtservlet + stservlet del protocolo
+// nuevo (GDI-405: al token viaja el digest).
+//
 // Uso: go run ./cmd/testserver  → imprime la URL gdifirma:// para abrir en Chrome.
+//
+// Es el único banco de pruebas con token real que existe. No prepara un PDF de
+// verdad —eso lo hace Notary del otro lado—: manda un digest de 32 bytes
+// inventado y, cuando vuelve la firma, la VERIFICA con la clave pública del
+// certificado que mandó el token. Si eso da bien, el circuito completo anduvo:
+// el token firmó exactamente los bytes que se le pidieron.
 package main
 
 import (
+	"crypto"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 const (
 	port      = "8765"
 	fileID    = "TESTFILE001"
 	sessionID = "TESTSESSION001"
+
+	// Cuántos polls se contestan con PENDING antes de largar los digests. Sirve
+	// para ver que el cliente realmente espera en vez de rendirse al primer
+	// intento.
+	pollsPendientes = 2
 )
-
-// minimalPDF genera un PDF de una página válido con offsets calculados al vuelo.
-func minimalPDF() []byte {
-	header := "%PDF-1.4\n"
-	obj1 := "1 0 obj\n<</Type/Catalog/Pages 2 0 R>>\nendobj\n"
-	obj2 := "2 0 obj\n<</Type/Pages/Kids[3 0 R]/Count 1>>\nendobj\n"
-	stream := "BT\n/F1 14 Tf\n72 700 Td\n(Documento de prueba - FirmadorGDI) Tj\nET\n"
-	obj3 := fmt.Sprintf("3 0 obj\n<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>\nendobj\n")
-	obj4 := fmt.Sprintf("4 0 obj\n<</Length %d>>\nstream\n%sendstream\nendobj\n", len(stream), stream)
-	obj5 := "5 0 obj\n<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>\nendobj\n"
-
-	off1 := len(header)
-	off2 := off1 + len(obj1)
-	off3 := off2 + len(obj2)
-	off4 := off3 + len(obj3)
-	off5 := off4 + len(obj4)
-	xrefPos := off5 + len(obj5)
-
-	xref := fmt.Sprintf(
-		"xref\n0 6\n0000000000 65535 f \n%010d 00000 n \n%010d 00000 n \n%010d 00000 n \n%010d 00000 n \n%010d 00000 n \ntrailer\n<</Size 6/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n",
-		off1, off2, off3, off4, off5, xrefPos,
-	)
-
-	return []byte(header + obj1 + obj2 + obj3 + obj4 + obj5 + xref)
-}
 
 type envelope struct {
 	XMLName xml.Name        `xml:"op"`
+	Version string          `xml:"v,attr"`
 	Entries []envelopeEntry `xml:"e"`
 }
 
@@ -56,27 +50,36 @@ type envelopeEntry struct {
 	V string `xml:"v,attr"`
 }
 
-var signedResult []byte
+type digestItem struct {
+	ID        string `json:"id"`
+	DigestB64 string `json:"digest_b64"`
+}
+
+type firmaItem struct {
+	ID     string `json:"id"`
+	SigB64 string `json:"sig_b64"`
+}
+
+// estado es lo que el servidor sabe de la sesión en curso.
+type estado struct {
+	mu     sync.Mutex
+	cert   *x509.Certificate
+	digest []byte
+	polls  int
+}
+
+var st estado
 
 func main() {
-	// Si se pasa un PDF como argumento, usarlo en lugar del generado.
-	pdf := minimalPDF()
-	if len(os.Args) > 1 {
-		data, err := os.ReadFile(os.Args[1])
-		if err != nil {
-			log.Fatalf("No se pudo leer el PDF: %v", err)
-		}
-		pdf = data
-		fmt.Printf("Usando PDF: %s (%d bytes)\n", os.Args[1], len(pdf))
-	} else {
-		fmt.Printf("Usando PDF de prueba embebido (%d bytes)\n", len(pdf))
-	}
+	// El "digest a firmar" que en producción sale de pyHanko
+	// (sha256 de los SignedAttributes). Acá alcanza con 32 bytes estables.
+	suma := sha256.Sum256([]byte("SignedAttributes de prueba — FirmadorGDI"))
+	st.digest = suma[:]
 
-	// Preparar el envelope XML con el PDF en base64.
-	pdfB64 := url.QueryEscape(base64.StdEncoding.EncodeToString(pdf))
 	env := envelope{
+		Version: "2",
 		Entries: []envelopeEntry{
-			{K: "dat", V: pdfB64},
+			{K: "mode", V: "digest"},
 			{K: "op", V: "sign"},
 			{K: "format", V: "PADES"},
 		},
@@ -84,83 +87,147 @@ func main() {
 	envXML, _ := xml.Marshal(env)
 	envB64 := base64.StdEncoding.EncodeToString(envXML)
 
-	// rtservlet: devuelve el envelope.
+	// rtservlet: primero devuelve el envelope; una vez que llegó el
+	// certificado, pasa a contestar el polling (PENDING → DIGESTS).
 	http.HandleFunc("/rt", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
-		op := r.FormValue("op")
-		id := r.FormValue("id")
+		op, id := r.FormValue("op"), r.FormValue("id")
 		log.Printf("rtservlet: op=%s id=%s", op, id)
-		if op == "get" {
-			fmt.Fprint(w, envB64)
-		} else {
+		if op != "get" {
 			http.Error(w, "op desconocida", 400)
+			return
 		}
+
+		st.mu.Lock()
+		defer st.mu.Unlock()
+
+		if st.cert == nil {
+			fmt.Fprint(w, envB64)
+			return
+		}
+		st.polls++
+		if st.polls <= pollsPendientes {
+			fmt.Fprint(w, "PENDING")
+			return
+		}
+		lista, _ := json.Marshal([]digestItem{{
+			ID:        sessionID,
+			DigestB64: base64.StdEncoding.EncodeToString(st.digest),
+		}})
+		fmt.Fprint(w, "DIGESTS:"+base64.RawURLEncoding.EncodeToString(lista))
 	})
 
-	// stservlet: recibe el resultado firmado y lo guarda.
+	// stservlet: recibe el certificado y después las firmas.
 	http.HandleFunc("/st", func(w http.ResponseWriter, r *http.Request) {
 		r.ParseForm()
-		op := r.FormValue("op")
-		id := r.FormValue("id")
-		dat := r.FormValue("dat")
+		op, id, dat := r.FormValue("op"), r.FormValue("id"), r.FormValue("dat")
 		log.Printf("stservlet: op=%s id=%s datLen=%d", op, id, len(dat))
-
-		if op == "put" {
-			if dat == "CANCEL" {
-				fmt.Println("\n⚠  El usuario canceló la firma.")
-				fmt.Fprint(w, "OK")
-				return
-			}
-			// Decodear blob: cert_DER + signed_PDF.
-			blob, err := base64.RawURLEncoding.DecodeString(dat)
-			if err != nil {
-				log.Printf("Error decodificando resultado: %v", err)
-				http.Error(w, "base64 inválido", 400)
-				return
-			}
-			// Guardar el PDF firmado (heurística: PDF empieza con %PDF-).
-			outPath, _ := filepath.Abs("test_signed.pdf")
-			if idx := strings.Index(string(blob), "%PDF-"); idx >= 0 {
-				if err := os.WriteFile(outPath, blob[idx:], 0644); err != nil {
-					log.Printf("Error guardando PDF: %v", err)
-				} else {
-					fmt.Printf("\n✓  PDF firmado guardado en: %s (%d bytes)\n", outPath, len(blob[idx:]))
-				}
-			} else {
-				// Guardar el blob completo si no se encuentra el header PDF.
-				os.WriteFile(outPath+".blob", blob, 0644)
-				fmt.Printf("\n✓  Blob guardado en: %s.blob (%d bytes)\n", outPath, len(blob))
-			}
-			fmt.Fprint(w, "OK")
-		} else if op == "get" {
-			fmt.Fprint(w, "")
-		} else {
+		if op != "put" {
 			http.Error(w, "op desconocida", 400)
+			return
 		}
+
+		switch {
+		case dat == "CANCEL" || strings.HasPrefix(dat, "BATCH_"):
+			fmt.Printf("\n⚠  La firma no se completó: %s\n", dat)
+
+		case strings.HasPrefix(dat, "CERT:"):
+			if err := recibirCert(strings.TrimPrefix(dat, "CERT:")); err != nil {
+				log.Printf("cert inválido: %v", err)
+				http.Error(w, "cert inválido", 400)
+				return
+			}
+
+		case strings.HasPrefix(dat, "SIGS:"):
+			if err := verificarFirmas(strings.TrimPrefix(dat, "SIGS:")); err != nil {
+				fmt.Printf("\n✗  LA FIRMA NO VERIFICA: %v\n", err)
+				http.Error(w, "firma inválida", 400)
+				return
+			}
+
+		default:
+			log.Printf("dat desconocido (%d bytes)", len(dat))
+			http.Error(w, "dat desconocido", 400)
+			return
+		}
+		fmt.Fprint(w, "OK")
 	})
 
 	base := fmt.Sprintf("http://localhost:%s", port)
-	rtURL := url.QueryEscape(base + "/rt")
-	stURL := url.QueryEscape(base + "/st")
-
 	gdiURI := fmt.Sprintf(
 		"gdifirma://sign?ver=1_0&fileid=%s&rtservlet=%s&stservlet=%s&id=%s&keystore=PKCS11",
-		fileID, rtURL, stURL, sessionID,
+		fileID, url.QueryEscape(base+"/rt"), url.QueryEscape(base+"/st"), sessionID,
 	)
 
 	fmt.Println("\n─────────────────────────────────────────────────────")
-	fmt.Printf("Servidor escuchando en %s\n\n", base)
+	fmt.Printf("Servidor escuchando en %s (protocolo digest, GDI-405)\n\n", base)
 	fmt.Println("Abrí esta URL en Chrome para disparar el firmador:")
 	fmt.Printf("\n  %s\n\n", gdiURI)
 	fmt.Println("O abrí test.html en Chrome (se genera en el directorio actual).")
 	fmt.Println("─────────────────────────────────────────────────────")
 
-	// Generar una página HTML para abrir fácilmente.
 	writeTestHTML(gdiURI)
 
 	if err := http.ListenAndServe(":"+port, nil); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func recibirCert(b64 string) error {
+	der, err := base64.RawURLEncoding.DecodeString(b64)
+	if err != nil {
+		return fmt.Errorf("base64: %w", err)
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return fmt.Errorf("DER: %w", err)
+	}
+	st.mu.Lock()
+	st.cert = cert
+	st.polls = 0
+	st.mu.Unlock()
+
+	fmt.Printf("\n✓  Certificado recibido: %s (%d bytes DER)\n",
+		cert.Subject.CommonName, len(der))
+	return nil
+}
+
+// verificarFirmas es el único chequeo que importa: que la firma que devolvió el
+// token sea una PKCS#1 v1.5 del digest que se le mandó, con la clave pública
+// del certificado que él mismo declaró.
+func verificarFirmas(b64 string) error {
+	crudo, err := base64.RawURLEncoding.DecodeString(b64)
+	if err != nil {
+		return fmt.Errorf("base64: %w", err)
+	}
+	var firmas []firmaItem
+	if err := json.Unmarshal(crudo, &firmas); err != nil {
+		return fmt.Errorf("JSON: %w", err)
+	}
+
+	st.mu.Lock()
+	cert, digest := st.cert, st.digest
+	st.mu.Unlock()
+	if cert == nil {
+		return fmt.Errorf("llegaron firmas sin certificado previo")
+	}
+	pub, ok := cert.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		return fmt.Errorf("el certificado no tiene clave RSA")
+	}
+
+	for _, f := range firmas {
+		sig, err := base64.StdEncoding.DecodeString(f.SigB64)
+		if err != nil {
+			return fmt.Errorf("firma de %s en base64 inválido: %w", f.ID, err)
+		}
+		if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, digest, sig); err != nil {
+			return fmt.Errorf("documento %s: %w", f.ID, err)
+		}
+		fmt.Printf("\n✓  Firma de %s VERIFICADA (%d bytes) contra el digest enviado\n",
+			f.ID, len(sig))
+	}
+	return nil
 }
 
 func writeTestHTML(uri string) {
@@ -184,9 +251,9 @@ func writeTestHTML(uri string) {
 <body>
   <div class="card">
     <h1>🔐 Test FirmadorGDI</h1>
-    <p>Hacé clic para disparar el firmador con un documento de prueba.</p>
-    <a href="%s">Firmar documento de prueba</a>
-    <p class="note">El PDF firmado se guarda como <code>test_signed.pdf</code> en la carpeta del servidor.</p>
+    <p>Hacé clic para disparar el firmador con un digest de prueba.</p>
+    <a href="%s">Firmar digest de prueba</a>
+    <p class="note">El resultado se verifica en la consola del servidor: no se genera ningún PDF.</p>
   </div>
 </body>
 </html>`, uri)
@@ -196,6 +263,5 @@ func writeTestHTML(uri string) {
 		log.Printf("No se pudo generar test.html: %v", err)
 		return
 	}
-	_ = io.Discard // silenciar lint
 	fmt.Printf("test.html generado en: %s\n", path)
 }
