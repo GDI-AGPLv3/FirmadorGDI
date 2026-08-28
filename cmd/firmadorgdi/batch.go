@@ -20,23 +20,23 @@ package main
 // hubiera existido.
 
 import (
-	"crypto/x509"
-	"encoding/base64"
-	"errors"
 	"fmt"
 	"log"
-	"time"
 
 	"github.com/gdi-latam/firmadorgdi/internal/pkcs11"
-	"github.com/gdi-latam/firmadorgdi/internal/signing"
 	"github.com/gdi-latam/firmadorgdi/internal/storage"
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
 	"github.com/gdi-latam/firmadorgdi/internal/uri"
+	"github.com/gdi-latam/firmadorgdi/internal/version"
 )
 
 // Estados que se le reportan al backend bajo el id de la tanda.
+//
+// BATCH_OK ya no existe: en el protocolo de GDI-405 el mensaje SIGS: va a ESA
+// MISMA key, así que mandar un estado después lo pisaría. El SIGS: es el cierre
+// de la tanda. Los estados de fracaso siguen, porque en esos casos no hay SIGS
+// que mandar.
 const (
-	batchOK       = "BATCH_OK"
 	batchCancel   = "BATCH_CANCEL"
 	batchFailed   = "BATCH_FAILED"
 	maxPINRetries = 3
@@ -46,9 +46,17 @@ func handleBatch(params *uri.Params) error {
 	log.Printf("tanda: manifiesto=%s id=%s", params.Manifest, params.SessionID)
 
 	// 1. Bajar la lista de lo que hay que firmar.
+	//
+	// Esto es lo único que se hace antes del PIN, y es a propósito: el diálogo
+	// tiene que decir CUÁNTOS documentos se van a firmar (condición D1-bis), y
+	// ese número sale del manifiesto. Son unos bytes de XML: los PDF ya no
+	// viajan por acá.
 	manifest, err := storage.FetchManifest(params.RtServlet, params.Manifest)
 	if err != nil {
 		return fmt.Errorf("no se pudo leer la lista de documentos: %w", err)
+	}
+	if err := manifest.ValidarV2(); err != nil {
+		return err
 	}
 	total := len(manifest.Items)
 	log.Printf("tanda: %d documentos", total)
@@ -61,144 +69,62 @@ func handleBatch(params *uri.Params) error {
 	defer token.Close()
 	log.Printf("Token detectado: %s (%s)", tokenInfo.Label, tokenInfo.Manufacturer)
 
-	// 3. Un solo diálogo de PIN, que dice CUÁNTOS documentos se van a firmar.
-	//
-	// Eso último no es un detalle de UI: es la condición D1-bis de la decisión
-	// que habilitó esta feature. Autorizar una tanda sin saber cuántos
-	// documentos incluye no es autorizar nada.
-	dlgInfo := ui.TokenInfo{
-		Label:        tokenInfo.Label,
-		Manufacturer: tokenInfo.Manufacturer,
-		Subject:      tokenInfo.Subject,
-		SerialNumber: tokenInfo.SerialNumber,
-		ValidUntil:   tokenInfo.ValidUntil,
-		BatchCount:   total,
+	// 3. Un solo diálogo de PIN, que dice cuántos documentos se van a firmar.
+	cancelar := func(motivo, estado string) {
+		cancelarTandaEntera(params, manifest, motivo, estado)
 	}
-
-	if err := loginConReintentos(token, dlgInfo, params, manifest); err != nil {
+	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, total), cancelar); err != nil {
 		return err
 	}
 	log.Println("Login OK — firmando la tanda")
 
-	// 4. Firmar de a uno, en el orden en que vinieron.
-	cert := token.Certificate()
-	certDER := token.CertificateDER()
+	// 4. Un solo certificado para toda la tanda: es lo que le dice al servidor
+	// que puede preparar los N documentos.
+	if err := storage.PostCert(params.StServlet, params.SessionID, token.CertificateDER()); err != nil {
+		cancelarTandaEntera(params, manifest, "no se pudo enviar el certificado", batchFailed)
+		return fmt.Errorf("no se pudo enviar el certificado: %w", err)
+	}
 
+	// 5. Un solo poll para toda la tanda.
+	log.Println("tanda: esperando a que el servidor prepare los documentos...")
+	digests, err := storage.EsperarDigests(params.RtServlet, params.Manifest)
+	if err != nil {
+		cancelarTandaEntera(params, manifest, "el servidor no preparó los documentos", batchFailed)
+		return err
+	}
+	if len(digests) != total {
+		cancelarTandaEntera(params, manifest, "faltan digests", batchFailed)
+		return fmt.Errorf(
+			"el manifiesto pedía firmar %d documentos y el servidor mandó %d digests — "+
+				"no se firma una tanda incompleta", total, len(digests))
+	}
+
+	// 6. Firmar los N digests con la sesión ya abierta. La barra de progreso
+	// mueve por documento aunque ahora sea cuestión de milisegundos: el PDF ya
+	// no viaja, lo único que queda es la operación del token.
 	progreso := ui.NewProgress(total)
 	defer progreso.Close()
 
-	for i, item := range manifest.Items {
-		progreso.Update(i+1, total)
-		log.Printf("tanda: firmando %d de %d (session=%s)", i+1, total, item.SessionID)
-
-		if err := firmarUno(params, item, cert, certDER, token); err != nil {
-			// ⚠️ Acá se corta. No se sigue con los que faltan.
-			log.Printf("tanda: FALLÓ el documento %d de %d: %v", i+1, total, err)
-			cancelarTandaEntera(params, manifest, fmt.Sprintf("documento %d", i+1), batchFailed)
-			return fmt.Errorf(
-				"falló el documento %d de %d (%v).\n\n"+
-					"Ninguno de los %d quedó firmado y los números vuelven al "+
-					"circuito. Podés volver a intentarlo.",
-				i+1, total, err, total,
-			)
-		}
+	firmas, err := firmarDigests(token, digests, func(n int) { progreso.Update(n, total) })
+	if err != nil {
+		// ⚠️ Todo o nada: cae la tanda entera, incluidos los que ya se firmaron.
+		log.Printf("tanda: FALLÓ: %v", err)
+		cancelarTandaEntera(params, manifest, "falló la firma", batchFailed)
+		return fmt.Errorf(
+			"falló la firma de la tanda (%v).\n\n"+
+				"Ninguno de los %d quedó firmado y los números vuelven al "+
+				"circuito. Podés volver a intentarlo.", err, total)
 	}
 
-	_ = storage.PostBatchStatus(params.StServlet, params.SessionID, batchOK)
+	// 7. Devolver las N firmas juntas. Este mensaje cierra la tanda.
+	if err := storage.PostFirmas(params.StServlet, params.SessionID, firmas); err != nil {
+		cancelarTandaEntera(params, manifest, "no se pudieron devolver las firmas", batchFailed)
+		return fmt.Errorf("no se pudieron devolver las firmas: %w", err)
+	}
 	log.Printf("tanda: %d documentos firmados y enviados", total)
-	return nil
-}
 
-// loginConReintentos pide el PIN hasta maxPINRetries veces. Si el usuario
-// cancela o se acaban los intentos, cae la tanda entera — en ese momento no se
-// firmó nada todavía, así que solo hay que devolver los números.
-func loginConReintentos(
-	token *pkcs11.Token,
-	dlgInfo ui.TokenInfo,
-	params *uri.Params,
-	manifest *storage.Manifest,
-) error {
-	for intento := 1; intento <= maxPINRetries; intento++ {
-		result, dlgErr := ui.ShowPINDialog(dlgInfo)
-		if errors.Is(dlgErr, ui.ErrCancelled) {
-			cancelarTandaEntera(params, manifest, "cancelado en el PIN", batchCancel)
-			return fmt.Errorf("el usuario canceló la firma")
-		}
-		if dlgErr != nil {
-			cancelarTandaEntera(params, manifest, "error del diálogo", batchFailed)
-			return fmt.Errorf("no se pudo mostrar el diálogo de PIN: %w", dlgErr)
-		}
-		if result.PIN == "" {
-			cancelarTandaEntera(params, manifest, "PIN vacío", batchFailed)
-			return fmt.Errorf("PIN vacío recibido del diálogo")
-		}
-
-		if loginErr := token.Login(result.PIN); loginErr != nil {
-			log.Printf("Login intento %d: %v", intento, loginErr)
-			if errors.Is(loginErr, pkcs11.ErrTokenLocked) {
-				cancelarTandaEntera(params, manifest, "token bloqueado", batchFailed)
-				return fmt.Errorf("token bloqueado — demasiados PINs incorrectos")
-			}
-			dlgInfo.WrongPIN = true
-			continue
-		}
-		return nil
-	}
-
-	cancelarTandaEntera(params, manifest, "máximo de intentos", batchCancel)
-	return fmt.Errorf("máximo de intentos alcanzado")
-}
-
-// firmarUno hace, para un documento de la tanda, exactamente lo mismo que la
-// firma de a una: bajar su PDF, armar la apariencia, firmar y devolver. El
-// token ya está abierto y logueado — eso es todo lo que la tanda ahorra.
-func firmarUno(
-	params *uri.Params,
-	item storage.ManifestItem,
-	cert *x509.Certificate,
-	certDER []byte,
-	token *pkcs11.Token,
-) error {
-	env, err := storage.FetchEnvelope(params.RtServlet, item.FileID)
-	if err != nil {
-		return fmt.Errorf("no se pudo bajar el documento: %w", err)
-	}
-
-	pdfB64, ok := env.Get("dat")
-	if !ok {
-		return fmt.Errorf("el documento vino sin contenido")
-	}
-	pdfBytes, err := base64.StdEncoding.DecodeString(pdfB64)
-	if err != nil {
-		return fmt.Errorf("el documento vino mal codificado: %w", err)
-	}
-
-	var app *signing.Appearance
-	if propsB64, ok := env.Get("properties"); ok && propsB64 != "" {
-		app, err = signing.AppearanceFromProperties(
-			propsB64, cert.Subject.CommonName, cert.Subject.SerialNumber)
-		if err != nil {
-			log.Println("WARN: properties inválidas, usando defaults:", err)
-		}
-	}
-	if app == nil {
-		app = &signing.Appearance{
-			Page: 1, LowerLeftX: 365, LowerLeftY: 30, UpperRightX: 565, UpperRightY: 90, //nolint
-			SignerName: cert.Subject.CommonName,
-			SerialNum:  cert.Subject.SerialNumber,
-			Reason:     "Firma digital",
-			SignedAt:   time.Now().Local(),
-		}
-	}
-
-	signedPDF, err := signing.SignPDF(pdfBytes, cert, token.Signer(), *app)
-	if err != nil {
-		return fmt.Errorf("no se pudo firmar: %w", err)
-	}
-
-	if err := storage.PostResult(params.StServlet, item.SessionID, certDER, signedPDF); err != nil {
-		return fmt.Errorf("no se pudo devolver la firma: %w", err)
-	}
+	progreso.Close()
+	ui.ShowInfoDialog(version.Producto, fmt.Sprintf("Se firmaron %d documentos.", total))
 	return nil
 }
 

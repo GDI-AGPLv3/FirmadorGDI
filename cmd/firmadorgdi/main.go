@@ -15,6 +15,7 @@
 package main
 
 import (
+	"crypto"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -22,10 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/gdi-latam/firmadorgdi/internal/pkcs11"
-	"github.com/gdi-latam/firmadorgdi/internal/signing"
 	"github.com/gdi-latam/firmadorgdi/internal/storage"
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
 	"github.com/gdi-latam/firmadorgdi/internal/uri"
@@ -105,27 +104,17 @@ func handleURI(rawURI string) error {
 	return handleSign(params)
 }
 
+// handleSign firma UN documento con el protocolo de GDI-405: el PDF no viaja.
+//
+// El orden es el que cambió de raíz respecto de 1.3.1. Antes se bajaba el PDF
+// —hasta 50 MB— y recién después se abría el token; si el funcionario cancelaba
+// el PIN, esa descarga había sido para nada. Ahora el PIN va PRIMERO: sin token
+// abierto no hay certificado, y sin certificado el servidor ni siquiera puede
+// empezar a preparar el documento.
 func handleSign(params *uri.Params) error {
 	log.Printf("fileid=%s session=%s keystore=%s", params.FileID, params.SessionID, params.Keystore)
 
-	// 2. Buscar el XML envelope en el rtservlet.
-	log.Println("Buscando PDF en el backend...")
-	env, err := storage.FetchEnvelope(params.RtServlet, params.FileID)
-	if err != nil {
-		return fmt.Errorf("FetchEnvelope: %w", err)
-	}
-
-	pdfB64, ok := env.Get("dat")
-	if !ok {
-		return fmt.Errorf("el envelope no contiene el PDF (falta 'dat')")
-	}
-	pdfBytes, err := base64.StdEncoding.DecodeString(pdfB64)
-	if err != nil {
-		return fmt.Errorf("PDF en base64 inválido: %w", err)
-	}
-	log.Printf("PDF recibido: %d bytes", len(pdfBytes))
-
-	// 3. Inicializar token.
+	// 1. Token y PIN, antes de cualquier ida y vuelta con el servidor.
 	token, tokenInfo, err := pkcs11.Open("")
 	if err != nil {
 		return fmt.Errorf("token no encontrado: %w", err)
@@ -133,83 +122,142 @@ func handleSign(params *uri.Params) error {
 	defer token.Close()
 	log.Printf("Token detectado: %s (%s)", tokenInfo.Label, tokenInfo.Manufacturer)
 
-	// 4. Diálogo PIN con reintentos (máx. 3).
-	const maxAttempts = 3
-	dlgInfo := ui.TokenInfo{
-		Label:        tokenInfo.Label,
-		Manufacturer: tokenInfo.Manufacturer,
-		Subject:      tokenInfo.Subject,
-		SerialNumber: tokenInfo.SerialNumber,
-		ValidUntil:   tokenInfo.ValidUntil,
+	cancelar := func(string, string) {
+		_ = storage.PostCancel(params.StServlet, params.SessionID)
 	}
-	var loginOK bool
-	for attempt := 1; attempt <= maxAttempts; attempt++ {
+	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, 0), cancelar); err != nil {
+		return err
+	}
+	log.Println("Login OK")
+
+	// 2. Envelope: solo para confirmar que del otro lado hay un servidor que
+	// habla el protocolo nuevo. Ya no trae documento.
+	env, err := storage.FetchEnvelope(params.RtServlet, params.FileID)
+	if err != nil {
+		cancelar("", "")
+		return fmt.Errorf("no se pudo consultar el documento: %w", err)
+	}
+	if err := env.ValidarV2(); err != nil {
+		cancelar("", "")
+		return err
+	}
+
+	// 3. Mandar el certificado: es lo que dispara la preparación del lado del
+	// servidor (estampa el sello con estos datos y arma el CMS).
+	if err := storage.PostCert(params.StServlet, params.SessionID, token.CertificateDER()); err != nil {
+		cancelar("", "")
+		return fmt.Errorf("no se pudo enviar el certificado: %w", err)
+	}
+
+	// 4. Esperar los digests.
+	log.Println("Esperando a que el servidor prepare el documento...")
+	digests, err := storage.EsperarDigests(params.RtServlet, params.FileID)
+	if err != nil {
+		cancelar("", "")
+		return err
+	}
+
+	// 5. Firmar con el token.
+	firmas, err := firmarDigests(token, digests, nil)
+	if err != nil {
+		cancelar("", "")
+		return err
+	}
+
+	// 6. Devolver las firmas.
+	if err := storage.PostFirmas(params.StServlet, params.SessionID, firmas); err != nil {
+		return fmt.Errorf("no se pudo devolver la firma: %w", err)
+	}
+	log.Println("Firma enviada al backend. Cerrando.")
+
+	ui.ShowInfoDialog(version.Producto, "El documento quedó firmado.")
+	return nil
+}
+
+// firmarDigests le pasa al token cada digest de la tanda y junta las firmas.
+//
+// avance, si no es nil, se llama con el número de documento que se está
+// firmando: es lo que mueve la barra de progreso de la tanda.
+func firmarDigests(
+	token *pkcs11.Token, digests []storage.DigestItem, avance func(n int),
+) ([]storage.FirmaItem, error) {
+	signer := token.Signer()
+	firmas := make([]storage.FirmaItem, 0, len(digests))
+
+	for i, d := range digests {
+		if avance != nil {
+			avance(i + 1)
+		}
+		// Valida que sean 32 bytes. El token firma a ciegas lo que se le pase:
+		// si acá entrara otra cosa, saldría una firma válida sobre algo que no
+		// es el documento que el funcionario autorizó.
+		digest, err := d.Digest()
+		if err != nil {
+			return nil, err
+		}
+		sig, err := signer.Sign(nil, digest, crypto.SHA256)
+		if err != nil {
+			return nil, fmt.Errorf("el token no pudo firmar el documento %s: %w", d.ID, err)
+		}
+		firmas = append(firmas, storage.FirmaItem{
+			ID:     d.ID,
+			SigB64: base64.StdEncoding.EncodeToString(sig),
+		})
+	}
+	log.Printf("%d documento(s) firmado(s) por el token", len(firmas))
+	return firmas, nil
+}
+
+// dialogoDeToken arma lo que ve el funcionario. batchCount en 0 o 1 es la firma
+// de a una y el cartel no cambia.
+func dialogoDeToken(info *pkcs11.TokenInfo, batchCount int) ui.TokenInfo {
+	return ui.TokenInfo{
+		Label:        info.Label,
+		Manufacturer: info.Manufacturer,
+		Subject:      info.Subject,
+		SerialNumber: info.SerialNumber,
+		ValidUntil:   info.ValidUntil,
+		BatchCount:   batchCount,
+	}
+}
+
+// pedirPINYLoguear muestra el diálogo del PIN hasta maxPINRetries veces.
+//
+// cancelar recibe el motivo y el estado que hay que reportarle al servidor; qué
+// se hace con eso depende de si es una firma sola (cancelar la sesión) o una
+// tanda (cancelarlas todas).
+func pedirPINYLoguear(
+	token *pkcs11.Token, dlgInfo ui.TokenInfo, cancelar func(motivo, estado string),
+) error {
+	for intento := 1; intento <= maxPINRetries; intento++ {
 		result, dlgErr := ui.ShowPINDialog(dlgInfo)
 		if errors.Is(dlgErr, ui.ErrCancelled) {
-			_ = storage.PostCancel(params.StServlet, params.SessionID)
+			cancelar("cancelado en el PIN", batchCancel)
 			return fmt.Errorf("el usuario canceló la firma")
 		}
 		if dlgErr != nil {
-			_ = storage.PostCancel(params.StServlet, params.SessionID)
+			cancelar("error del diálogo", batchFailed)
 			return fmt.Errorf("no se pudo mostrar el diálogo de PIN: %w", dlgErr)
 		}
 		if result.PIN == "" {
-			_ = storage.PostCancel(params.StServlet, params.SessionID)
+			cancelar("PIN vacío", batchFailed)
 			return fmt.Errorf("PIN vacío recibido del diálogo")
 		}
 
 		if loginErr := token.Login(result.PIN); loginErr != nil {
-			log.Printf("Login intento %d: %v", attempt, loginErr)
+			log.Printf("Login intento %d: %v", intento, loginErr)
 			if errors.Is(loginErr, pkcs11.ErrTokenLocked) {
-				_ = storage.PostCancel(params.StServlet, params.SessionID)
+				cancelar("token bloqueado", batchFailed)
 				return fmt.Errorf("token bloqueado — demasiados PINs incorrectos")
 			}
 			dlgInfo.WrongPIN = true
 			continue
 		}
-		loginOK = true
-		break
-	}
-	if !loginOK {
-		_ = storage.PostCancel(params.StServlet, params.SessionID)
-		return fmt.Errorf("máximo de intentos alcanzado")
-	}
-	log.Println("Login OK")
-
-	// 5. Construir appearance desde properties del envelope.
-	cert := token.Certificate()
-	var app *signing.Appearance
-	if propsB64, ok := env.Get("properties"); ok && propsB64 != "" {
-		app, err = signing.AppearanceFromProperties(propsB64, cert.Subject.CommonName, cert.Subject.SerialNumber)
-		if err != nil {
-			log.Println("WARN: properties inválidas, usando defaults:", err)
-		}
-	}
-	if app == nil {
-		app = &signing.Appearance{
-			Page: 1, LowerLeftX: 365, LowerLeftY: 30, UpperRightX: 565, UpperRightY: 90, //nolint
-			SignerName: cert.Subject.CommonName,
-			SerialNum:  cert.Subject.SerialNumber,
-			Reason:     "Firma digital",
-			SignedAt:   time.Now().Local(),
-		}
+		return nil
 	}
 
-	// 6. Firmar el PDF.
-	log.Println("Firmando PDF...")
-	signedPDF, err := signing.SignPDF(pdfBytes, cert, token.Signer(), *app)
-	if err != nil {
-		_ = storage.PostCancel(params.StServlet, params.SessionID)
-		return fmt.Errorf("SignPDF: %w", err)
-	}
-	log.Printf("PDF firmado: %d bytes", len(signedPDF))
-
-	// 7. Postear resultado al stservlet.
-	if err := storage.PostResult(params.StServlet, params.SessionID, token.CertificateDER(), signedPDF); err != nil {
-		return fmt.Errorf("PostResult: %w", err)
-	}
-	log.Println("Firma enviada al backend. Cerrando.")
-	return nil
+	cancelar("máximo de intentos", batchCancel)
+	return fmt.Errorf("máximo de intentos alcanzado")
 }
 
 func registerURIScheme() error {
