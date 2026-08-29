@@ -113,7 +113,7 @@ Lo que cambió en 1.4.0 es qué se dice por ese transporte. El firmador pide el 
 |------|---------|
 | 1 | `op=get` → envelope `v="2"` con `mode=digest` (ya **no** trae el PDF) |
 | 2 | `op=put` → `CERT:` + certificado DER del token (dispara la preparación en el servidor) |
-| 3 | `op=get` cada 500 ms, hasta 20 veces → `PENDING` hasta que el servidor contesta `DIGESTS:` |
+| 3 | `op=get` en bucle (500 ms → 2 s, hasta 120 s en total) → `PENDING` hasta que el servidor contesta `DIGESTS:` |
 | 4 | `op=put` → `SIGS:` con una firma por documento |
 
 `DIGESTS:` y `SIGS:` son JSON en base64url: `[{"id": …, "digest_b64": …}]` y `[{"id": …, "sig_b64": …}]`. La tanda usa exactamente los mismos cuatro pasos con N ids.

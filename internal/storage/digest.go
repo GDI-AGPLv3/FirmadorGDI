@@ -48,12 +48,49 @@ const (
 // funcionario habría firmado cualquier cosa con su token.
 const TamanoDigestSHA256 = 32
 
-// Parámetros del polling. El servidor tiene que estampar el número, componer el
-// sello y preparar el CMS de cada documento contra Notary; eso tarda.
+// Parámetros del polling.
+//
+// El presupuesto NO es un número redondo elegido de arriba: es el peor caso
+// realista del otro lado. El servidor tiene que estampar el número, componer el
+// sello y armar el CMS de cada documento contra Notary, que corre con
+// min_machines_running=0 — el primer pedido paga el arranque en frío de la
+// máquina. En una tanda son N preparaciones, y el arranque en frío se paga una
+// sola vez pero las N esperan atrás.
+//
+// El techo anterior eran 20 intentos de 500 ms: 10 s clavados, menos de lo que
+// tarda un cold-start solo. Cuando se agotaba, el funcionario veía un timeout
+// DESPUÉS de haber puesto el PIN y los números quedaban reservados hasta que la
+// sesión venciera. Rendirse antes que el servidor es lo peor de los dos mundos:
+// el trabajo se hace igual y nadie se lo lleva.
+//
+// El límite de arriba lo pone la sesión del servidor
+// (DIGITAL_SIGNATURE_SESSION_TTL, 240 s): esperar más que eso es esperar a algo
+// que ya no existe. 120 s deja la mitad de margen.
 const (
-	IntentosPolling = 20
-	EsperaPolling   = 500 * time.Millisecond
+	// PresupuestoPolling es cuánto se espera EN TOTAL, no por intento.
+	PresupuestoPolling = 120 * time.Second
+
+	// SesionServidorTTL es lo que vive la sesión del otro lado. No se usa para
+	// esperar: está acá para que el techo de arriba no se pueda subir por
+	// encima sin que un test lo note.
+	SesionServidorTTL = 240 * time.Second
+
+	// La espera entre polls arranca corta —para que el caso feliz no pague
+	// nada— y crece hasta el techo, para no martillar al servidor durante dos
+	// minutos.
+	EsperaPollingInicial = 500 * time.Millisecond
+	EsperaPollingMaxima  = 2 * time.Second
 )
+
+// siguienteEspera hace crecer el intervalo entre polls a la mitad más, sin
+// pasarse del techo.
+func siguienteEspera(actual, maxima time.Duration) time.Duration {
+	proxima := actual + actual/2
+	if proxima > maxima {
+		return maxima
+	}
+	return proxima
+}
 
 // DigestItem es un documento listo para firmar: qué sesión es y qué 32 bytes
 // hay que meterle al token.
@@ -187,28 +224,36 @@ func PostFirmas(stServlet, sessionID string, firmas []FirmaItem) error {
 }
 
 // EsperarDigests pollea el retriever hasta que el servidor termine de preparar
-// los documentos.
+// los documentos, dentro del presupuesto de PresupuestoPolling.
 //
-// El tope es de IntentosPolling × EsperaPolling (10 s). Si se agota NO se sigue
-// esperando en silencio: el usuario ya puso el PIN y tiene que enterarse de que
-// la firma no salió, porque del otro lado los números quedan reservados hasta
-// que la sesión venza.
+// Si se agota NO se sigue esperando en silencio: el usuario ya puso el PIN y
+// tiene que enterarse de que la firma no salió, porque del otro lado los
+// números quedan reservados hasta que la sesión venza.
 func EsperarDigests(rtServlet, id string) ([]DigestItem, error) {
-	return esperarDigests(rtServlet, id, IntentosPolling, EsperaPolling)
+	return esperarDigests(
+		rtServlet, id, PresupuestoPolling, EsperaPollingInicial, EsperaPollingMaxima)
 }
 
 // esperarDigests es EsperarDigests con los tiempos por parámetro, para que los
-// tests no tengan que dormir diez segundos para probar el vencimiento.
+// tests no tengan que esperar dos minutos para probar el vencimiento.
+//
+// El presupuesto se mide contra el reloj, no contando intentos: lo que importa
+// es cuánto tiempo se le da al servidor, y con backoff cada intento dura
+// distinto. El primer pedido sale sin dormir nada, así que el caso feliz —el
+// servidor ya tenía todo listo— no paga un solo milisegundo de espera.
 func esperarDigests(
-	rtServlet, id string, intentos int, espera time.Duration,
+	rtServlet, id string, presupuesto, esperaInicial, esperaMaxima time.Duration,
 ) ([]DigestItem, error) {
+	limite := time.Now().Add(presupuesto)
+	espera := esperaInicial
 	var ultimoErr error
-	for intento := 1; intento <= intentos; intento++ {
+
+	for {
 		cuerpo, err := Get(rtServlet, id)
 		if err != nil {
 			// Un error de red suelto no tira la firma abajo: el servidor puede
-			// estar reiniciando una instancia. Se reintenta mientras queden
-			// intentos y, si se acaban, se reporta el último error real.
+			// estar reiniciando una instancia. Se reintenta mientras quede
+			// presupuesto y, si se acaba, se reporta el último error real.
 			ultimoErr = err
 		} else {
 			items, pendiente, perr := ParsearDigests(cuerpo)
@@ -220,16 +265,24 @@ func esperarDigests(
 			}
 			ultimoErr = nil
 		}
-		if intento < intentos {
-			time.Sleep(espera)
+
+		restante := time.Until(limite)
+		if restante <= 0 {
+			break
 		}
+		if espera > restante {
+			espera = restante
+		}
+		time.Sleep(espera)
+		espera = siguienteEspera(espera, esperaMaxima)
 	}
-	total := time.Duration(intentos) * espera
+
 	if ultimoErr != nil {
 		return nil, fmt.Errorf(
-			"el servidor no llegó a preparar los documentos en %s: %w", total, ultimoErr)
+			"el servidor no llegó a preparar los documentos en %s: %w", presupuesto, ultimoErr)
 	}
 	return nil, fmt.Errorf(
-		"el servidor sigue preparando los documentos después de %s — se cancela la firma",
-		total)
+		"el servidor está tardando más de lo normal: no preparó los documentos en %s. "+
+			"No se firmó nada y los números vuelven al circuito — probá de nuevo en un rato",
+		presupuesto)
 }

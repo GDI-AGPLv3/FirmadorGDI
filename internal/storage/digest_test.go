@@ -255,7 +255,7 @@ func TestElPollingEsperaMientrasElServidorPrepara(t *testing.T) {
 	}))
 	defer s.Close()
 
-	items, err := esperarDigests(s.URL, "SES1", 10, time.Millisecond)
+	items, err := esperarDigests(s.URL, "SES1", time.Second, time.Millisecond, 2*time.Millisecond)
 	if err != nil {
 		t.Fatalf("se rindió antes de que el servidor terminara: %v", err)
 	}
@@ -275,12 +275,94 @@ func TestElPollingSeRindeYAvisa(t *testing.T) {
 	}))
 	defer s.Close()
 
-	_, err := esperarDigests(s.URL, "SES1", 3, time.Millisecond)
+	arranque := time.Now()
+	_, err := esperarDigests(s.URL, "SES1", 50*time.Millisecond, time.Millisecond, 5*time.Millisecond)
 	if err == nil {
 		t.Fatal("esperó para siempre a un servidor que nunca termina")
 	}
-	if !strings.Contains(err.Error(), "prepar") {
-		t.Errorf("el error no explica qué pasó: %v", err)
+	// El presupuesto es un piso, no solo un techo. Rendirse antes es lo que
+	// dejaba números reservados con el trabajo ya hecho del otro lado.
+	if tardo := time.Since(arranque); tardo < 50*time.Millisecond {
+		t.Errorf("se rindió a los %s y el presupuesto era 50ms", tardo)
+	}
+	if !strings.Contains(err.Error(), "tardando más de lo normal") {
+		t.Errorf("el error no le dice al funcionario qué está pasando: %v", err)
+	}
+	if !strings.Contains(err.Error(), "de nuevo") {
+		t.Errorf("el error no le dice que puede reintentar: %v", err)
+	}
+}
+
+// El caso feliz —el servidor ya tenía los digests listos— no puede pagar ni un
+// milisegundo de espera: el presupuesto largo está para el cold-start, no para
+// meterle latencia a la firma normal.
+func TestElCasoFelizNoEsperaNada(t *testing.T) {
+	var pedidos atomic.Int32
+	lista := []DigestItem{{ID: "SES1", DigestB64: digestDe(t, TamanoDigestSHA256)}}
+
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pedidos.Add(1)
+		fmt.Fprint(w, digestsB64(t, lista))
+	}))
+	defer s.Close()
+
+	// Espera inicial absurda a propósito: si el código durmiera ANTES de
+	// preguntar, este test tardaría un minuto en vez de milisegundos.
+	arranque := time.Now()
+	if _, err := esperarDigests(s.URL, "SES1", time.Minute, time.Minute, time.Minute); err != nil {
+		t.Fatalf("falló el caso feliz: %v", err)
+	}
+	if pedidos.Load() != 1 {
+		t.Errorf("pidió %d veces algo que ya estaba listo en la primera", pedidos.Load())
+	}
+	if tardo := time.Since(arranque); tardo > 5*time.Second {
+		t.Errorf("el caso feliz tardó %s: está durmiendo antes de preguntar", tardo)
+	}
+}
+
+// El presupuesto tiene que cubrir el peor caso realista del otro lado —el
+// cold-start de Notary (min_machines_running=0) más las N preparaciones de una
+// tanda— y quedar debajo de lo que vive la sesión del servidor: esperar más que
+// eso es esperar a algo que ya no existe. Fueron 10 s durante un rato, que es
+// menos que un cold-start solo, y el funcionario se comía el timeout DESPUÉS de
+// haber puesto el PIN.
+func TestElPresupuestoDePollingCubreElColdStart(t *testing.T) {
+	if PresupuestoPolling < 60*time.Second {
+		t.Errorf("el presupuesto es %s: no alcanza para un cold-start de Notary",
+			PresupuestoPolling)
+	}
+	if PresupuestoPolling >= SesionServidorTTL {
+		t.Errorf("el presupuesto (%s) llega o pasa el TTL de la sesión del servidor (%s): "+
+			"se estaría esperando a una sesión ya vencida",
+			PresupuestoPolling, SesionServidorTTL)
+	}
+}
+
+// El backoff existe para no martillar al servidor durante dos minutos, pero no
+// puede crecer sin techo: cuando el servidor termina, el próximo poll no puede
+// estar a una eternidad de distancia.
+func TestLaEsperaCreceHastaElTechoYSeQuedaAhi(t *testing.T) {
+	const techo = 2 * time.Second
+
+	espera := EsperaPollingInicial
+	primera := siguienteEspera(espera, techo)
+	if primera <= espera {
+		t.Fatalf("la espera no crece: %s → %s", espera, primera)
+	}
+
+	espera = primera
+	for i := 0; i < 20; i++ {
+		proxima := siguienteEspera(espera, techo)
+		if proxima < espera {
+			t.Fatalf("la espera se achicó: %s → %s", espera, proxima)
+		}
+		if proxima > techo {
+			t.Fatalf("la espera se pasó del techo: %s > %s", proxima, techo)
+		}
+		espera = proxima
+	}
+	if espera != techo {
+		t.Errorf("después de 20 pasos la espera es %s y el techo es %s", espera, techo)
 	}
 }
 
@@ -298,7 +380,7 @@ func TestElPollingUsaOpGetConSuId(t *testing.T) {
 	}))
 	defer s.Close()
 
-	if _, err := esperarDigests(s.URL, "FILE123", 2, time.Millisecond); err != nil {
+	if _, err := esperarDigests(s.URL, "FILE123", time.Second, time.Millisecond, 2*time.Millisecond); err != nil {
 		t.Fatalf("falló: %v", err)
 	}
 	if op != "get" {

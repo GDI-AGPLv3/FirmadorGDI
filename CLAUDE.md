@@ -164,9 +164,15 @@ siempre (`op=get` / `op=put`, form-urlencoded):
 
 1. `op=get` → envelope `v="2"` con `mode=digest`, **sin** `dat`.
 2. `op=put` → `CERT:` + certificado DER del token en base64url.
-3. `op=get` cada 500 ms, hasta 20 veces → `PENDING` mientras el servidor
-   estampa el sello y arma el CMS contra Notary; después `DIGESTS:` + JSON
-   base64url `[{"id", "digest_b64"}]`.
+3. `op=get` en bucle → `PENDING` mientras el servidor estampa el sello y arma
+   el CMS contra Notary; después `DIGESTS:` + JSON base64url
+   `[{"id", "digest_b64"}]`. El presupuesto es de **120 s en total** (no de N
+   intentos), con la espera creciendo de 500 ms a 2 s. Notary corre con
+   `min_machines_running=0`: el primer pedido paga el arranque en frío, y en
+   una tanda las N preparaciones esperan atrás. El techo lo pone
+   `DIGITAL_SIGNATURE_SESSION_TTL` (240 s del lado del servidor): rendirse
+   antes deja al funcionario con un timeout DESPUÉS del PIN y los números
+   reservados hasta que la sesión venza.
 4. `op=put` → `SIGS:` + JSON base64url `[{"id", "sig_b64"}]`.
 
 La tanda hace los mismos cuatro pasos con N ids: **un** CERT, **un** poll y
