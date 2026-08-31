@@ -170,7 +170,8 @@ func handleSign(params *uri.Params) error {
 	}
 	log.Println("Firma enviada al backend. Cerrando.")
 
-	ui.ShowInfoDialog(version.Producto, "El documento quedó firmado.")
+	// 31/08: sin dialogo de exito (mismo criterio que la tanda) — la web
+	// muestra el resultado.
 	return nil
 }
 
