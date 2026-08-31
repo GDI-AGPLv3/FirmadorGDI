@@ -27,7 +27,6 @@ import (
 	"github.com/gdi-latam/firmadorgdi/internal/storage"
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
 	"github.com/gdi-latam/firmadorgdi/internal/uri"
-	"github.com/gdi-latam/firmadorgdi/internal/version"
 )
 
 // Estados que se le reportan al backend bajo el id de la tanda.
@@ -124,7 +123,9 @@ func handleBatch(params *uri.Params) error {
 	log.Printf("tanda: %d documentos firmados y enviados", total)
 
 	progreso.Close()
-	ui.ShowInfoDialog(version.Producto, fmt.Sprintf("Se firmaron %d documentos.", total))
+	// 31/08 (pedido de Santiago): sin dialogo de exito — la pagina web ya
+	// muestra el resultado; un "Aceptar" extra es un click que no aporta.
+	// Los dialogos de ERROR quedan: ahi si hay algo que la web no sabe.
 	return nil
 }
 
