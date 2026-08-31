@@ -150,13 +150,52 @@ paisaje y deja de leerse.
   código. Sin él, Windows SmartScreen sigue mostrando la advertencia al
   instalar. Es una card aparte.
 
+## El protocolo cambió en 1.4.0: el PDF ya no viaja (GDI-405)
+
+Hasta 1.3.1 el servidor mandaba el PDF entero dentro del envelope, el firmador
+lo firmaba en la máquina del funcionario y devolvía el PDF firmado. Un
+expediente de 19 MB cruzaba dos veces una conexión municipal para que al token
+le llegaran, al final, 32 bytes.
+
+Ahora el PDF se queda en el servidor. El firmador pide el PIN **primero** —sin
+token abierto no hay certificado, y sin certificado el servidor no puede
+preparar nada— y después intercambia cuatro mensajes por el mismo transporte de
+siempre (`op=get` / `op=put`, form-urlencoded):
+
+1. `op=get` → envelope `v="2"` con `mode=digest`, **sin** `dat`.
+2. `op=put` → `CERT:` + certificado DER del token en base64url.
+3. `op=get` en bucle → `PENDING` mientras el servidor estampa el sello y arma
+   el CMS contra Notary; después `DIGESTS:` + JSON base64url
+   `[{"id", "digest_b64"}]`. El presupuesto es de **120 s en total** (no de N
+   intentos), con la espera creciendo de 500 ms a 2 s. Notary corre con
+   `min_machines_running=0`: el primer pedido paga el arranque en frío, y en
+   una tanda las N preparaciones esperan atrás. El techo lo pone
+   `DIGITAL_SIGNATURE_SESSION_TTL` (240 s del lado del servidor): rendirse
+   antes deja al funcionario con un timeout DESPUÉS del PIN y los números
+   reservados hasta que la sesión venza.
+4. `op=put` → `SIGS:` + JSON base64url `[{"id", "sig_b64"}]`.
+
+La tanda hace los mismos cuatro pasos con N ids: **un** CERT, **un** poll y
+**un** SIGS para todos los documentos. El manifiesto pasó a `v="1_2"`.
+
+Dos cosas que no son evidentes:
+
+- **El largo del digest se valida acá** (`storage.DigestItem.Digest`, 32 bytes).
+  El token firma a ciegas: `tokenSigner.Sign` le antepone el DigestInfo de
+  SHA-256 sin mirar qué recibe, así que un digest de otro tamaño produciría una
+  firma válida sobre algo que no es un SHA-256.
+- **No hay fallback al protocolo viejo.** `internal/signing` se borró junto con
+  sus dependencias (digitorus/pdfsign, fogleman/gg): el binario ya no sabe
+  firmar un PDF. Un envelope con `dat` corta con un error que le dice al
+  funcionario que actualicen el servidor. El cruce no ocurre en la práctica
+  porque el servidor se deploya antes que el MSI.
+
 ## Estructura
 
 ```
 cmd/firmadorgdi/    main: URI handler, --register, --version
 internal/uri/       parseo de gdifirma:// (parse.go — acá viven rtservlet/stservlet)
 internal/pkcs11/    acceso al token físico
-internal/signing/   firma PAdES
 internal/storage/   subida/bajada contra los servlets del backend
 internal/ui/        diálogos nativos de Windows
 internal/version/   la versión, y el test que la mantiene sincronizada con el MSI
@@ -171,6 +210,7 @@ El backend arma la URI en `services/documents/signing/providers/firmador_gdi.py`
 
 - el identificador de sesión **ES la credencial** de ese endpoint (no hay JWT),
   por eso tiene 128 bits de entropía y rate-limit por IP (GDI-242, GDI-272);
-- el backend compara el PDF que vuelve contra el que mandó y **rechaza** si no
-  coincide (GDI-273). Si alguna vez se cambia el firmador para que reescriba el
-  PDF en vez de firmar incremental, las firmas se cortan hasta revertir.
+- desde 1.4.0 **no vuelve ningún PDF**, así que la comparación de GDI-273 ya no
+  aplica. La reemplaza un binding más fuerte: el backend verifica que la firma
+  que devolvió el token sea una RSA PKCS#1 v1.5 válida del digest que él mismo
+  mandó, con la clave pública del certificado que el token declaró (GDI-405).
