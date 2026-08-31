@@ -13,6 +13,11 @@ import (
 	"syscall"
 )
 
+// logoPNGB64 es el isologo GDI (96x96 PNG, extraído de installer/firmadorgdi.ico)
+// embebido para que los diálogos WPF lo muestren sin depender de archivos en
+// disco: viaja por env (AGDI_LOGO_B64) y PowerShell lo decodifica a BitmapImage.
+const logoPNGB64 = "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"
+
 // ShowPINDialog muestra un diálogo WPF (via PowerShell) para ingresar el PIN.
 func ShowPINDialog(info TokenInfo) (PINResult, error) {
 	log.Printf("ShowPINDialog: iniciando via PowerShell — label=%q", info.Label)
@@ -24,6 +29,7 @@ func ShowPINDialog(info TokenInfo) (PINResult, error) {
 		"AGDI_VALID="+sanitize(info.ValidUntil),
 		"AGDI_WRONG_PIN="+boolStr(info.WrongPIN),
 		"AGDI_BATCH_COUNT="+strconv.Itoa(info.BatchCount),
+		"AGDI_LOGO_B64="+logoPNGB64,
 	)
 
 	cmd := exec.Command("powershell",
@@ -79,6 +85,7 @@ func runNotifyPS(title, message string, isError bool) {
 		"AGDI_DLG_TITLE="+title,
 		"AGDI_DLG_MSG="+message,
 		"AGDI_DLG_ERROR="+boolStr(isError),
+		"AGDI_LOGO_B64="+logoPNGB64,
 	)
 	cmd := exec.Command("powershell",
 		"-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
@@ -173,6 +180,24 @@ $iconBg = if ($isError) { '#2D0A0A' }    else { '#052E16' }
 
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $win    = [Windows.Markup.XamlReader]::Load($reader)
+
+# Isologo GDI embebido (AGDI_LOGO_B64): icono de ventana + header. Soft-fail:
+# un logo que no decodifica jamas puede impedir firmar.
+if ($env:AGDI_LOGO_B64) {
+    try {
+        $logoBytes = [Convert]::FromBase64String($env:AGDI_LOGO_B64)
+        $logoMs  = New-Object System.IO.MemoryStream(,$logoBytes)
+        $logoBmp = New-Object System.Windows.Media.Imaging.BitmapImage
+        $logoBmp.BeginInit()
+        $logoBmp.StreamSource = $logoMs
+        $logoBmp.CacheOption  = 'OnLoad'
+        $logoBmp.EndInit()
+        $logoBmp.Freeze()
+        $win.Icon = $logoBmp
+        $imgLogo = $win.FindName('imgLogo')
+        if ($imgLogo) { $imgLogo.Source = $logoBmp }
+    } catch { }
+}
 
 $win.FindName('iconBorder').Background = [Windows.Media.SolidColorBrush][Windows.Media.ColorConverter]::ConvertFromString($iconBg)
 $win.FindName('iconText').Text         = $icon
@@ -285,8 +310,13 @@ if ($valid) {
     </Grid.RowDefinitions>
     <Rectangle Grid.Row="0" Fill="#0EA5E9"/>
     <StackPanel Grid.Row="1" Margin="32,24,32,28">
-      <TextBlock Text="FirmadorGDI" Foreground="#F1F5F9" FontSize="20" FontWeight="Bold" Margin="0,0,0,4"/>
-      <TextBlock Text="Firma digital con token físico" Foreground="#64748B" FontSize="12" Margin="0,0,0,24"/>
+      <StackPanel Orientation="Horizontal" Margin="0,0,0,24">
+        <Image x:Name="imgLogo" Width="40" Height="40" Margin="0,0,12,0" VerticalAlignment="Center"/>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock Text="FirmadorGDI" Foreground="#F1F5F9" FontSize="20" FontWeight="Bold" Margin="0,0,0,2"/>
+          <TextBlock Text="Firma digital con token físico" Foreground="#64748B" FontSize="12"/>
+        </StackPanel>
+      </StackPanel>
       <Border Background="#1E293B" CornerRadius="8" Padding="16,14" Margin="0,0,0,20">
         <StackPanel>
           <TextBlock Foreground="#94A3B8" FontSize="11" Text="TOKEN DETECTADO" FontWeight="SemiBold" Margin="0,0,0,6"/>
@@ -315,6 +345,24 @@ if ($valid) {
 
 $reader = New-Object System.Xml.XmlNodeReader $xaml
 $win    = [Windows.Markup.XamlReader]::Load($reader)
+
+# Isologo GDI embebido (AGDI_LOGO_B64): icono de ventana + header. Soft-fail:
+# un logo que no decodifica jamas puede impedir firmar.
+if ($env:AGDI_LOGO_B64) {
+    try {
+        $logoBytes = [Convert]::FromBase64String($env:AGDI_LOGO_B64)
+        $logoMs  = New-Object System.IO.MemoryStream(,$logoBytes)
+        $logoBmp = New-Object System.Windows.Media.Imaging.BitmapImage
+        $logoBmp.BeginInit()
+        $logoBmp.StreamSource = $logoMs
+        $logoBmp.CacheOption  = 'OnLoad'
+        $logoBmp.EndInit()
+        $logoBmp.Freeze()
+        $win.Icon = $logoBmp
+        $imgLogo = $win.FindName('imgLogo')
+        if ($imgLogo) { $imgLogo.Source = $logoBmp }
+    } catch { }
+}
 
 $txtPin   = $win.FindName('txtPin')
 $btnOK    = $win.FindName('btnOK')
