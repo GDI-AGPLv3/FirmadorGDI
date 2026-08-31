@@ -5,6 +5,7 @@ package storage
 import (
 	"encoding/base64"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,8 +110,13 @@ func Get(endpoint, id string) (string, error) {
 }
 
 // Envelope es el XML que el backend pone en storage para AutoFirmaGDI.
+//
+// El atributo v dice qué protocolo habla el servidor: "2" es el de GDI-405
+// (mode=digest, sin PDF adentro). Cualquier cosa anterior traía el PDF entero
+// en la clave `dat`.
 type Envelope struct {
-	XMLName xml.Name       `xml:"op"`
+	XMLName xml.Name        `xml:"op"`
+	Version string          `xml:"v,attr"`
 	Entries []EnvelopeEntry `xml:"e"`
 }
 
@@ -153,12 +159,29 @@ func (e *Envelope) Get(key string) (string, bool) {
 	return "", false
 }
 
-// PostResult postea el resultado firmado al stservlet.
-// El formato es: base64url-sin-padding(cert_DER + signed_PDF).
-func PostResult(stServlet, sessionID string, certDER, signedPDF []byte) error {
-	blob := append(certDER, signedPDF...)
-	encoded := base64.RawURLEncoding.EncodeToString(blob)
-	return Put(stServlet, sessionID, encoded)
+// ErrServidorViejo es el envelope de un servidor que todavía manda el PDF.
+//
+// Desde 1.4.0 el firmador NO sabe firmar un PDF: el estampado y el armado del
+// CMS viven en el servidor y acá quedó solo el token. Un envelope con `dat` no
+// es un caso a resolver con un fallback —el código que lo resolvía ya no
+// existe—, es un servidor que quedó atrás. El cruce no debería ocurrir: el
+// servidor se deploya antes que el MSI.
+var ErrServidorViejo = errors.New(
+	"el servidor no soporta esta versión del firmador (FirmadorGDI " + version.Version +
+		"): todavía manda el documento completo. Contactá a soporte para que actualicen el sistema")
+
+// ValidarV2 verifica que el envelope sea del protocolo nuevo.
+func (e *Envelope) ValidarV2() error {
+	if _, tienePDF := e.Get("dat"); tienePDF {
+		return ErrServidorViejo
+	}
+	modo, ok := e.Get("mode")
+	if !ok || modo != "digest" {
+		return fmt.Errorf(
+			"el envelope no declara mode=digest (v=%q, mode=%q): no se puede firmar",
+			e.Version, modo)
+	}
+	return nil
 }
 
 // PostCancel notifica al backend que el usuario canceló.
@@ -189,6 +212,22 @@ type Manifest struct {
 type ManifestItem struct {
 	FileID    string `xml:"fileid,attr"`
 	SessionID string `xml:"id,attr"`
+}
+
+// ManifestVersionDigest es el manifiesto del protocolo de GDI-405. La tanda
+// vieja (1_1) hacía un envelope con PDF por documento; la nueva pide UN CERT,
+// UN poll y UN SIGS para toda la tanda.
+const ManifestVersionDigest = "1_2"
+
+// ValidarV2 rechaza el manifiesto de un servidor que quedó atrás. Es la única
+// señal que tiene la tanda: en el protocolo nuevo ya no se baja un envelope por
+// documento, así que si no se mira acá el desfasaje aparece recién en el
+// polling, después de que el funcionario puso el PIN.
+func (m *Manifest) ValidarV2() error {
+	if m.Version != "" && m.Version != ManifestVersionDigest {
+		return ErrServidorViejo
+	}
+	return nil
 }
 
 // FetchManifest baja la lista de la tanda. Mismo camino que FetchEnvelope: el

@@ -39,3 +39,56 @@ func TestVersionEnganchaLaConsola(t *testing.T) {
 		t.Error("se engancha la consola después de imprimir: no sirve de nada")
 	}
 }
+
+// GDI-405 — el PIN va PRIMERO, antes de hablar con el servidor.
+//
+// Es el orden lo que hace al cambio: hasta 1.3.1 se bajaba el PDF entero y
+// recién después se abría el token, así que una cancelación en el PIN tiraba a
+// la basura una descarga de hasta 50 MB. Y ahora hay una razón más dura: el
+// servidor no puede preparar nada sin el certificado, y el certificado sale del
+// token. Si alguien vuelve a poner una llamada de red antes del login, el
+// circuito nuevo deja de tener sentido y nadie se entera hasta producción.
+//
+// El test es estático porque el flujo real necesita un token físico.
+func TestElPINVaAntesDeHablarConElServidor(t *testing.T) {
+	fuente, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatalf("no se pudo leer main.go: %v", err)
+	}
+
+	cuerpo := funcionHandleSign(t, string(fuente))
+
+	login := strings.Index(cuerpo, "pedirPINYLoguear")
+	if login < 0 {
+		t.Fatal("handleSign no pide el PIN")
+	}
+	for _, llamadaDeRed := range []string{
+		"storage.FetchEnvelope", "storage.PostCert", "storage.EsperarDigests",
+	} {
+		pos := strings.Index(cuerpo, llamadaDeRed)
+		if pos < 0 {
+			t.Errorf("handleSign ya no llama a %s", llamadaDeRed)
+			continue
+		}
+		if pos < login {
+			t.Errorf("%s ocurre ANTES del PIN: el token tiene que abrirse primero", llamadaDeRed)
+		}
+	}
+}
+
+// funcionHandleSign devuelve el cuerpo de handleSign, hasta la función
+// siguiente. Sin esto el test mediría posiciones de todo el archivo y los
+// helpers de más abajo lo ensuciarían.
+func funcionHandleSign(t *testing.T, fuente string) string {
+	t.Helper()
+
+	inicio := strings.Index(fuente, "func handleSign(")
+	if inicio < 0 {
+		t.Fatal("no se encontró handleSign en main.go")
+	}
+	resto := fuente[inicio+1:]
+	if fin := strings.Index(resto, "\nfunc "); fin >= 0 {
+		return resto[:fin]
+	}
+	return resto
+}

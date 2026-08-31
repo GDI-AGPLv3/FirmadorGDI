@@ -15,17 +15,22 @@ Un binario Go de ~10 MB, sin runtime externo, que:
 
 1. Chrome lanza automáticamente cuando el sistema de gestión documental dice "firmar"
 2. Muestra un diálogo moderno con el token detectado y un campo PIN
-3. Firma el PDF con tu clave privada — la clave **nunca sale del token**
-4. Devuelve el PDF firmado al sistema
+3. Firma con tu clave privada el resumen (SHA-256) del documento — la clave **nunca sale del token**
+4. Devuelve la firma al sistema, que la incrusta en el PDF
+
+Desde 1.4.0 **el PDF no viaja**: se queda en el servidor y lo único que cruza la
+red son 32 bytes de digest en un sentido y 256 bytes de firma en el otro. Antes,
+un expediente de 19 MB se bajaba y se volvía a subir por una conexión municipal
+para que al token le llegaran, al final, esos mismos 32 bytes.
 
 ```
 Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
                                         ↓ PKCS#11
                                   Token físico (ePass2003)
+                                        ↓ firma de 256 bytes
+                                  Backend GDI  →  Notary
                                         ↓
                                   PDF firmado (PAdES)
-                                        ↓
-                                  Backend GDI
 ```
 
 ## Estado
@@ -45,7 +50,8 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | E2E completo (Chrome → token físico → PDF firmado) | ✅ Validado |
 | Sin flash de consola — `HideWindow` a nivel SO | ✅ Validado |
 | Instalador MSI (WiX v7, sin admin) | ✅ Validado |
-| Sello visual idéntico a la firma electrónica (Courier, 4 líneas) | ✅ Validado |
+| Sello visual idéntico a la firma electrónica (Courier, 4 líneas) | ✅ Validado (lo estampa el servidor desde 1.4.0) |
+| El PDF no sale del servidor — al token viaja el digest (GDI-405) | ✅ 1.4.0 |
 | Code signing (Azure Trusted Signing) | ❌ Descartado por ahora |
 | macOS | 🔧 Sprint 3 |
 
@@ -99,7 +105,20 @@ CGO_ENABLED=1 go build -ldflags "-s -w -H windowsgui" -o firmadorgdi.exe ./cmd/f
 
 ## Protocolo
 
-Compatible con @firma 1.9 — el mismo protocolo que usa AutoFirma España. El backend genera una URI `gdifirma://sign?...` que Chrome entrega al binario.
+El transporte sigue siendo el de @firma 1.9 —el mismo que usa AutoFirma España—: el backend genera una URI `gdifirma://sign?...` que Chrome entrega al binario, y el binario habla con dos servlets por `POST` form-urlencoded (`op=get` / `op=put`).
+
+Lo que cambió en 1.4.0 es qué se dice por ese transporte. El firmador pide el PIN **primero** y después:
+
+| Paso | Mensaje |
+|------|---------|
+| 1 | `op=get` → envelope `v="2"` con `mode=digest` (ya **no** trae el PDF) |
+| 2 | `op=put` → `CERT:` + certificado DER del token (dispara la preparación en el servidor) |
+| 3 | `op=get` en bucle (500 ms → 2 s, hasta 120 s en total) → `PENDING` hasta que el servidor contesta `DIGESTS:` |
+| 4 | `op=put` → `SIGS:` con una firma por documento |
+
+`DIGESTS:` y `SIGS:` son JSON en base64url: `[{"id": …, "digest_b64": …}]` y `[{"id": …, "sig_b64": …}]`. La tanda usa exactamente los mismos cuatro pasos con N ids.
+
+⚠️ **1.4.0 no habla con servidores viejos.** Si el envelope trae el PDF (`dat`), el firmador corta con un error que le dice al funcionario que actualicen el sistema: el código que firmaba PDFs se borró.
 
 Referencia técnica: `docs/protocolo-afirma.md` *(próximamente)*.
 
@@ -110,7 +129,7 @@ cmd/firmadorgdi/main.go         entrypoint — orquesta el flujo completo
 internal/uri/parse.go           parseo y validación de gdifirma://
 internal/storage/client.go      cliente HTTP storage/retriever (@firma)
 internal/pkcs11/token.go        PKCS#11: detectar token, login, signer
-internal/signing/pdf.go         firmar PDF con PAdES + sello visible 4 líneas
+internal/storage/digest.go      protocolo CERT:/DIGESTS:/SIGS: (GDI-405)
 internal/ui/dialog.go           tipos compartidos (TokenInfo, PINResult)
 internal/ui/dialog_windows.go   diálogo WPF — tema oscuro (build tag windows)
 internal/ui/dialog_darwin.go    diálogo osascript / Cocoa (build tag darwin)
