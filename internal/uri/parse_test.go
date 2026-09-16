@@ -2,6 +2,7 @@ package uri
 
 import (
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -112,16 +113,24 @@ func TestServletTieneQueSerHTTPS(t *testing.T) {
 
 // El programa queda registrado como el que atiende gdifirma://, así que
 // cualquier página que el funcionario abra puede lanzarle un link. Las URLs del
-// servidor viajan adentro. Sin lista de dominios, un link ajeno conseguía que
+// servidor viajan adentro. Sin lista de hosts, un link ajeno conseguía que
 // el token firmara documentos que el funcionario nunca vio — y con la tanda,
 // cinco por un solo PIN.
-func TestSoloSeLeObedeceALosDominiosPropios(t *testing.T) {
+//
+// FG-001: este test ANTES consagraba el agujero. Daba por permitido cualquier
+// cosa bajo ".fly.dev" —hosting compartido, cuenta gratuita, TLS válido— así
+// que protegía justamente lo que había que cerrar. Ahora la lista son hosts
+// completos y el test lo verifica en los dos sentidos.
+func TestSoloSeLeObedeceALosServidoresPropios(t *testing.T) {
 	base := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11"
 
+	// Los hosts reales de los cuatro ambientes, escritos completos.
 	permitidos := []string{
 		"https://gdi-backend-dev.fly.dev",
-		"https://api.gdilatam.com",
-		"https://gdilatam.com",
+		"https://demo-backend-prd.fly.dev",
+		"https://aries-backend-prd.fly.dev",
+		"https://arg-backend-prd.fly.dev",
+		"https://enlace.gdilatam.com",
 		"http://localhost:8000",
 		"http://127.0.0.1:8000",
 	}
@@ -135,17 +144,45 @@ func TestSoloSeLeObedeceALosDominiosPropios(t *testing.T) {
 
 	ajenos := []string{
 		"https://evil.com",
-		"https://gdilatam.com.evil.com",     // el sufijo pegado a otro dominio
-		"https://evil.com/?x=gdilatam.com",  // el nombre propio en el path
+		"https://gdilatam.com.evil.com",    // el sufijo pegado a otro dominio
+		"https://evil.com/?x=gdilatam.com", // el nombre propio en el path
 		"https://fly.dev.attacker.net",
-		"http://gdilatam.com",               // sin TLS y no es local
+		"http://gdilatam.com", // sin TLS y no es local
 		"https://192.168.1.50",
+
+		// FG-001, el caso que antes pasaba: fly.dev es hosting compartido.
+		"https://firma-muni.fly.dev",
+		"https://gdi-backend-dev.attacker.fly.dev",
+		"https://cualquiera.fly.dev",
+
+		// Un host propio pero que NO está en la lista tampoco pasa: la política
+		// es host completo, no "termina con gdilatam.com".
+		"https://gdilatam.com",
+		"https://api.gdilatam.com",
+		"https://arg.gdilatam.com",
+
+		// Prefijo/sufijo pegado a un host que sí está en la lista.
+		"https://enlace.gdilatam.com.evil.net",
+		"https://xenlace.gdilatam.com",
 	}
 	for _, servlet := range ajenos {
 		raw := base + "&rtservlet=" + url.QueryEscape(servlet) +
 			"&stservlet=" + url.QueryEscape(servlet)
 		if _, err := Parse(raw); err == nil {
 			t.Errorf("aceptó un servidor ajeno: %q", servlet)
+		}
+	}
+}
+
+// La lista no puede volver a tener sufijos: un solo "." al principio de una
+// entrada reabre FG-001 entero.
+func TestLaListaNoTieneSufijos(t *testing.T) {
+	for _, h := range HostsPermitidos {
+		if strings.HasPrefix(h, ".") {
+			t.Errorf("HostsPermitidos tiene un sufijo (%q): se compara host completo, un sufijo autoriza subdominios ajenos (FG-001)", h)
+		}
+		if strings.Contains(h, "*") {
+			t.Errorf("HostsPermitidos tiene un wildcard (%q)", h)
 		}
 	}
 }

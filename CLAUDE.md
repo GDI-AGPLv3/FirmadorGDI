@@ -19,12 +19,19 @@ funcionario instala una vez y firma contra DEV, HML o PRD según desde dónde
 haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 
 > ⚠️ Agnóstico del ambiente **no** quiere decir que acepte cualquier servidor.
-> `DominiosPermitidos` (en `internal/uri/parse.go`) es la lista de hosts a los
-> que el programa le obedece: `*.gdilatam.com`, `*.fly.dev` y local. Existe
+> `HostsPermitidos` (en `internal/uri/parse.go`) es la lista de hosts a los
+> que el programa le obedece, **escritos completos y comparados exactos**: los
+> cuatro backends (`gdi-backend-dev`, `demo-backend-prd`, `aries-backend-prd`,
+> `arg-backend-prd`, todos `.fly.dev`), `enlace.gdilatam.com` y local. Existe
 > porque, una vez instalado, **cualquier página que el funcionario abra puede
 > lanzar un `gdifirma://`** — y las URLs del servidor viajan dentro del link.
 > Sin la lista, un link ajeno lograba que el token firmara documentos que el
 > funcionario nunca vio, y con el modo lote son cinco por un solo PIN.
+>
+> **Nada de sufijos en esa lista** (FG-001, 04/09/2026): hasta la versión 1.4.2
+> decía `.fly.dev`, y fly.dev es hosting compartido — cualquiera publicaba
+> `lo-que-sea.fly.dev` con TLS válido y quedaba autorizado. Un test
+> (`TestLaListaNoTieneSufijos`) falla si alguien vuelve a poner uno.
 >
 > Una instalación on-premise con dominio propio **necesita que se agregue el
 > suyo a esa lista y se compile una versión nueva**. No se lee de configuración
