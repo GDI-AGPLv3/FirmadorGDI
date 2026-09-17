@@ -132,7 +132,7 @@ var HostsPermitidos = []string{
 	// El objetivo es que PRD se sirva por *.gdilatam.com y que estas tres
 	// líneas se borren. Eso NO se puede hacer desde acá: primero hay que emitir
 	// el certificado de cada backend y cambiar su AUTOFIRMA_STORAGE_URL —
-	// borrarlas antes deja a ARIES, DEMO y ARG sin firma con token. Ver GDI-533.
+	// borrarlas antes deja a ARIES, DEMO y ARG sin firma con token. Ver GDI-535.
 	"demo-backend-prd.fly.dev",
 	"aries-backend-prd.fly.dev",
 	"arg-backend-prd.fly.dev",
