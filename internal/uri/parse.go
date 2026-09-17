@@ -72,9 +72,8 @@ func Parse(raw string) (*Params, error) {
 	return p, nil
 }
 
-// DominiosPermitidos son los únicos servidores a los que este programa le
-// obedece. Se comparan contra el host; un sufijo que arranca con "." matchea el
-// dominio pelado y todos sus subdominios.
+// HostsPermitidos son los únicos servidores a los que este programa le obedece.
+// Se comparan contra el host, UNO POR UNO y exacto: no hay sufijos.
 //
 // ── Por qué existe esta lista ────────────────────────────────────────────────
 //
@@ -91,26 +90,65 @@ func Parse(raw string) (*Params, error) {
 // Que la lista sea pública no la debilita: no protege por ser secreta, protege
 // porque el programa se niega a hablar con cualquier otro.
 //
+// ── Por qué EXACTOS y no sufijos (FG-001, auditoría 04/09/2026) ──────────────
+//
+// Acá había ".fly.dev", un SUFIJO, y eso dejaba la puerta igual de abierta que
+// no tener lista: fly.dev es hosting compartido —está en la Public Suffix List
+// justamente por eso—, así que cualquiera con una cuenta gratuita publicaba
+// su-servidor.fly.dev, con TLS válido, y quedaba autorizado. El propio repo trae
+// el molde del servidor (cmd/testserver, ~60 líneas). Un digest de 32 bytes
+// elegido por el atacante es el SHA-256 de un CMS armado sobre el PDF que él
+// quiera: el resultado es una firma PAdES válida, con el certificado de la AC
+// ONTI, sobre un documento que el funcionario nunca vio. El binding que hace el
+// backend no interviene, porque el backend de GDI no participa de ese ida y
+// vuelta.
+//
+// Por eso ahora se listan HOSTS COMPLETOS. Agregar un ambiente nuevo es agregar
+// una línea acá y compilar; es una molestia deliberada, y es más barata que un
+// sufijo que autoriza a medio internet.
+//
 // ── Lo que NO cambia ─────────────────────────────────────────────────────────
 //
-// El binario sigue siendo agnóstico del ambiente: DEV, HML y PRD viven todos
-// bajo estos dominios, así que un mismo MSI sigue sirviendo para los tres. Esa
-// propiedad —la razón por la que las URLs viajan en la URI en vez de estar
-// compiladas— se conserva entera.
+// El binario sigue siendo agnóstico del ambiente: DEV, HML y PRD están todos en
+// esta lista, así que un mismo MSI sigue sirviendo para los tres. Esa propiedad
+// —la razón por la que las URLs viajan en la URI en vez de estar compiladas— se
+// conserva entera.
 //
 // ⚠️ Una instalación on-premise con dominio propio queda afuera y necesita que
 // se agregue el suyo acá, en una versión nueva. Es el costo asumido: leerlo de
 // un archivo de configuración local volvería a abrir la puerta, porque quien
 // puede escribir ese archivo puede autorizarse a sí mismo.
-var DominiosPermitidos = []string{
-	".gdilatam.com",
-	".fly.dev",
+var HostsPermitidos = []string{
+	// DEV — es el default de AUTOFIRMA_STORAGE_URL en el backend cuando la
+	// variable no está seteada, que es el caso de gdi-backend-dev.
+	"gdi-backend-dev.fly.dev",
+
+	// PRD — TRANSITORIOS. Están acá porque hoy los tres backends de producción
+	// arman la URI con su propio *.fly.dev: se leyó de las apps y vale
+	// https://demo-backend-prd.fly.dev/digital-signature/storage (idem ARIES;
+	// ARG no se pudo leer y va por el mismo patrón). No tienen dominio propio:
+	// `fly certs list` no devuelve ninguno para los tres.
+	//
+	// El objetivo es que PRD se sirva por *.gdilatam.com y que estas tres
+	// líneas se borren. Eso NO se puede hacer desde acá: primero hay que emitir
+	// el certificado de cada backend y cambiar su AUTOFIRMA_STORAGE_URL —
+	// borrarlas antes deja a ARIES, DEMO y ARG sin firma con token. Ver GDI-535.
+	"demo-backend-prd.fly.dev",
+	"aries-backend-prd.fly.dev",
+	"arg-backend-prd.fly.dev",
+
+	// Dominio propio del backend de DEV (`fly certs list -a gdi-backend-dev`
+	// lo da como Issued). Es la forma a la que van los otros tres.
+	"enlace.gdilatam.com",
+
+	// Solo para cmd/testserver. Ver FG-008: debería quedar detrás de un build
+	// tag; no se toca en este cambio.
 	"localhost",
 	"127.0.0.1",
 }
 
 // isAllowedServletURL exige HTTPS —o HTTP solo contra local— y que el host esté
-// en la lista de arriba.
+// en la lista de arriba, escrito completo.
 func isAllowedServletURL(u string) bool {
 	parsed, err := url.Parse(u)
 	if err != nil {
@@ -127,13 +165,9 @@ func isAllowedServletURL(u string) bool {
 		return false
 	}
 
-	for _, permitido := range DominiosPermitidos {
-		if strings.HasPrefix(permitido, ".") {
-			if strings.HasSuffix(host, permitido) || host == permitido[1:] {
-				return true
-			}
-			continue
-		}
+	// Comparación EXACTA: sin sufijos, sin HasSuffix. Un "termina con" es lo
+	// que hacía que cualquier subdominio de un hosting compartido pasara.
+	for _, permitido := range HostsPermitidos {
 		if host == permitido {
 			return true
 		}
