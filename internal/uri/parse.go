@@ -123,15 +123,22 @@ var HostsPermitidos = []string{
 	// variable no está seteada, que es el caso de gdi-backend-dev.
 	"gdi-backend-dev.fly.dev",
 
-	// PRD — un host por ambiente. Cada backend arma la URI con su propio
-	// AUTOFIRMA_STORAGE_URL; DEMO se leyó de la app y vale
-	// https://demo-backend-prd.fly.dev/digital-signature/storage.
+	// PRD — TRANSITORIOS. Están acá porque hoy los tres backends de producción
+	// arman la URI con su propio *.fly.dev: se leyó de las apps y vale
+	// https://demo-backend-prd.fly.dev/digital-signature/storage (idem ARIES;
+	// ARG no se pudo leer y va por el mismo patrón). No tienen dominio propio:
+	// `fly certs list` no devuelve ninguno para los tres.
+	//
+	// El objetivo es que PRD se sirva por *.gdilatam.com y que estas tres
+	// líneas se borren. Eso NO se puede hacer desde acá: primero hay que emitir
+	// el certificado de cada backend y cambiar su AUTOFIRMA_STORAGE_URL —
+	// borrarlas antes deja a ARIES, DEMO y ARG sin firma con token. Ver GDI-533.
 	"demo-backend-prd.fly.dev",
 	"aries-backend-prd.fly.dev",
 	"arg-backend-prd.fly.dev",
 
-	// Dominio propio previsto para la URI de PRD (hoy apunta al backend).
-	// Cuando los backends pasen a servirse por acá, estos son los que quedan.
+	// Dominio propio del backend de DEV (`fly certs list -a gdi-backend-dev`
+	// lo da como Issued). Es la forma a la que van los otros tres.
 	"enlace.gdilatam.com",
 
 	// Solo para cmd/testserver. Ver FG-008: debería quedar detrás de un build
