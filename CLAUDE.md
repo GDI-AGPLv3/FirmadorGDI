@@ -41,9 +41,22 @@ haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 > `lo-que-sea.fly.dev` con TLS válido y quedaba autorizado. Un test
 > (`TestLaListaNoTieneSufijos`) falla si alguien vuelve a poner uno.
 >
-> Una instalación on-premise con dominio propio **necesita que se agregue el
-> suyo a esa lista y se compile una versión nueva**. No se lee de configuración
-> local a propósito: quien puede escribir ese archivo podría autorizarse solo.
+> **Una instalación on-premise autoriza su propio servidor EN LA INSTALACIÓN**
+> (1.6.0, GDI-532), sin compilar nada:
+> `msiexec /i FirmadorGDI.msi SERVIDORGDI="api.su-municipio.gob.ar"`.
+> El host queda en `HKLM\SOFTWARE\GDILatam\FirmadorGDI`, valor `HostsAutorizados`, que
+> **pide permisos de administrador**: el MSI corre elevado y puede escribirlo; el
+> funcionario después no. Para cambiarlo, se reinstala.
+>
+> Por eso HKLM y no un archivo junto al .exe, ni una variable de entorno, ni HKCU:
+> esos tres los escribe el propio usuario, y con cualquiera de ellos algo que corra
+> como el usuario se autoriza solo — FG-001 con pasos extra. El ataque de FG-001 es
+> REMOTO (un link con el servidor del atacante adentro) y ese atacante no escribe en
+> HKLM. Lo que queda posible es la ingeniería social —convencer al área de sistemas—,
+> y contra eso está el cartel del servidor en el diálogo del PIN (1.5.0).
+>
+> Lo que entra por esa puerta se valida: hosts pelados, sin sufijos, comodines,
+> esquemas, puertos ni barras. Un solo sufijo ahí reabriría FG-001 entero.
 
 > ⚠️ El parámetro `ver` se parsea pero **nunca se valida** (`validate()` no lo
 > mira). Subirlo a `1_1` no rompe nada por sí solo — hay que tenerlo presente
