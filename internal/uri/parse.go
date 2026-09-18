@@ -137,9 +137,18 @@ var HostsPermitidos = []string{
 	"aries-backend-prd.fly.dev",
 	"arg-backend-prd.fly.dev",
 
-	// Dominio propio del backend de DEV (`fly certs list -a gdi-backend-dev`
-	// lo da como Issued). Es la forma a la que van los otros tres.
-	"enlace.gdilatam.com",
+	// Los dominios propios, uno por ambiente (GDI-535, 17-18/09/2026). Cada uno
+	// tiene su certificado emitido en Fly y su backend detrás; el `enlace.`
+	// sin sufijo que estaba acá en la 1.4.3 se dio de baja (DNS y certificado)
+	// porque el nombre limpio apuntando a DEV confundía.
+	//
+	// El backend sirve estos hosts RECORTADOS: solo /health y las rutas de
+	// firma; el resto da 404 (HostFilterMiddleware). Por eso el municipio puede
+	// habilitar este host en su firewall sin abrir el backend entero.
+	"enlace-dev.gdilatam.com",
+	"enlace-aries.gdilatam.com",
+	"enlace-arg.gdilatam.com",
+	"enlace-demo.gdilatam.com",
 
 	// Solo para cmd/testserver. Ver FG-008: debería quedar detrás de un build
 	// tag; no se toca en este cambio.
@@ -175,6 +184,37 @@ func isAllowedServletURL(u string) bool {
 	return false
 }
 
+// revisarServlet distingue los DOS motivos por los que una URL se rechaza, que
+// hasta la 1.4.3 salían con el mismo texto ("debe ser HTTPS").
+//
+// Pasó de verdad el 18/09: el backend de DEV empezó a armar el enlace con
+// enlace-dev.gdilatam.com —HTTPS y perfectamente válido— y el firmador 1.4.3 lo
+// rechazó diciendo "debe ser HTTPS". El mensaje mandaba a revisar el certificado
+// cuando el problema era que ese host no estaba en la lista de esa versión.
+//
+// Un error que miente cuesta más que el error.
+func revisarServlet(nombre, crudo string) error {
+	parsed, err := url.Parse(crudo)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("%s no es una URL válida: %q", nombre, crudo)
+	}
+
+	host := parsed.Hostname()
+	esLocal := host == "localhost" || host == "127.0.0.1"
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && esLocal) {
+		return fmt.Errorf("%s debe ser HTTPS (o localhost para pruebas): %q", nombre, crudo)
+	}
+
+	if !isAllowedServletURL(crudo) {
+		return fmt.Errorf(
+			"el servidor %q no está autorizado en esta versión del FirmadorGDI (%s). "+
+				"Si es el servidor de tu municipio, hace falta una versión que lo incluya; "+
+				"si no lo reconocés, NO firmes: cancelá y avisá a sistemas",
+			host, nombre)
+	}
+	return nil
+}
+
 func (p *Params) validate() error {
 	// GDI-167: cada operación exige lo suyo. `sign` pide fileid —tal cual
 	// siempre—; `batch` pide manifest, que es la lista de lo que hay que firmar.
@@ -205,14 +245,14 @@ func (p *Params) validate() error {
 	if p.RtServlet == "" {
 		return fmt.Errorf("falta parámetro 'rtservlet'")
 	}
-	if !isAllowedServletURL(p.RtServlet) {
-		return fmt.Errorf("rtservlet debe ser HTTPS (o localhost para pruebas): %q", p.RtServlet)
+	if err := revisarServlet("rtservlet", p.RtServlet); err != nil {
+		return err
 	}
 	if p.StServlet == "" {
 		return fmt.Errorf("falta parámetro 'stservlet'")
 	}
-	if !isAllowedServletURL(p.StServlet) {
-		return fmt.Errorf("stservlet debe ser HTTPS (o localhost para pruebas): %q", p.StServlet)
+	if err := revisarServlet("stservlet", p.StServlet); err != nil {
+		return err
 	}
 	return nil
 }
