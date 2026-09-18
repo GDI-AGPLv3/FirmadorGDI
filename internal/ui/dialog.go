@@ -24,6 +24,11 @@ type TokenInfo struct {
 	// autorizar una tanda sin saber cuántos documentos incluye no es autorizar
 	// nada (condición D1-bis de la decisión que habilitó la feature).
 	BatchCount   int
+	// Servidor es el host al que se le van a mandar las firmas
+	// (enlace-arg.gdilatam.com y compañía). Se muestra SIEMPRE en el diálogo,
+	// antes del PIN: el funcionario tiene que poder ver a dónde va lo que
+	// autoriza. Hasta la 1.4.4 el diálogo no lo decía.
+	Servidor string
 }
 
 // PINResult es lo que devuelve el diálogo.

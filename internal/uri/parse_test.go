@@ -259,3 +259,24 @@ func TestElErrorNombraElHost(t *testing.T) {
 		t.Errorf("el error no nombra el host: %q", err.Error())
 	}
 }
+
+// El diálogo del PIN muestra a dónde van las firmas, y ese dato sale de acá.
+func TestServidorHostSaleDelLink(t *testing.T) {
+	casos := map[string]string{
+		"https://enlace-arg.gdilatam.com/digital-signature/storage": "enlace-arg.gdilatam.com",
+		"https://enlace-dev.gdilatam.com/digital-signature/storage": "enlace-dev.gdilatam.com",
+		"http://localhost:8000/digital-signature/storage":           "localhost",
+	}
+	for servlet, esperado := range casos {
+		raw := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11" +
+			"&rtservlet=" + url.QueryEscape(servlet) +
+			"&stservlet=" + url.QueryEscape(servlet)
+		p, err := Parse(raw)
+		if err != nil {
+			t.Fatalf("no parseo %q: %v", servlet, err)
+		}
+		if got := p.ServidorHost(); got != esperado {
+			t.Errorf("ServidorHost() de %q = %q, se esperaba %q", servlet, got, esperado)
+		}
+	}
+}

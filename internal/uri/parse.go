@@ -184,6 +184,23 @@ func isAllowedServletURL(u string) bool {
 	return false
 }
 
+// ServidorHost es el host al que este link le va a mandar las firmas, listo
+// para mostrarle al funcionario ANTES de que ponga el PIN. Sale de RtServlet,
+// que a esta altura ya pasó por revisarServlet.
+//
+// Existe porque el diálogo del PIN no decía a dónde iban las firmas: el
+// funcionario autorizaba con su token sin ver el servidor. Con la lista de
+// hosts eso alcanzaba para el ataque remoto, pero no para el caso en que
+// alguien logre que se agregue un host (por ejemplo, convenciendo al área de
+// sistemas). Verlo es la defensa que no depende de ninguna lista.
+func (p *Params) ServidorHost() string {
+	parsed, err := url.Parse(p.RtServlet)
+	if err != nil {
+		return ""
+	}
+	return parsed.Hostname()
+}
+
 // revisarServlet distingue los DOS motivos por los que una URL se rechaza, que
 // hasta la 1.4.3 salían con el mismo texto ("debe ser HTTPS").
 //
