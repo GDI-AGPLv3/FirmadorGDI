@@ -156,8 +156,82 @@ var HostsPermitidos = []string{
 	"127.0.0.1",
 }
 
+// hostsDeInstalacion son los que agregó el administrador al instalar, además de
+// los de arriba. Se llenan UNA vez al arrancar, desde donde solo un
+// administrador puede escribir (en Windows, HKLM — ver internal/hostsconfig).
+//
+// ── Por qué esto no reabre FG-001 ────────────────────────────────────────────
+//
+// El ataque de FG-001 es REMOTO: una página cualquiera lanza un gdifirma:// con
+// el servidor del atacante adentro. Ese atacante no puede escribir en HKLM, así
+// que no puede agregarse a esta lista. El funcionario tampoco: no es admin de su
+// máquina. Lo que sí queda posible es la INGENIERÍA SOCIAL — convencer al área
+// de sistemas de agregar un host —, y contra eso la defensa es que el diálogo
+// del PIN muestre siempre el servidor (ui.TokenInfo.Servidor).
+//
+// Por eso NO se lee de un archivo junto al .exe, ni de una variable de entorno,
+// ni de HKCU: cualquiera de los tres los escribe el propio usuario, y ahí sí
+// volvería el agujero.
+var hostsDeInstalacion []string
+
+// AgregarHostsAutorizados suma hosts a la lista, validándolos. Devuelve los que
+// aceptó, para que el llamador los loguee: si un host quedó afuera hay que poder
+// verlo en el log y no descubrirlo cuando el funcionario no puede firmar.
+//
+// Rechaza lo que no sea un host pelado: sufijos (".ejemplo.com"), wildcards,
+// esquemas, barras, puertos y espacios. Un solo sufijo acá reabriría FG-001.
+func AgregarHostsAutorizados(hosts []string) []string {
+	aceptados := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		h = strings.ToLower(strings.TrimSpace(h))
+		if !hostValido(h) {
+			continue
+		}
+		if yaEsta(h) {
+			continue
+		}
+		hostsDeInstalacion = append(hostsDeInstalacion, h)
+		aceptados = append(aceptados, h)
+	}
+	return aceptados
+}
+
+// HostsAutorizados devuelve la lista efectiva: los compilados más los de la
+// instalación. Es lo que el diálogo y el log pueden mostrar.
+func HostsAutorizados() []string {
+	todos := make([]string, 0, len(HostsPermitidos)+len(hostsDeInstalacion))
+	todos = append(todos, HostsPermitidos...)
+	todos = append(todos, hostsDeInstalacion...)
+	return todos
+}
+
+func hostValido(h string) bool {
+	if h == "" || len(h) > 253 {
+		return false
+	}
+	if strings.ContainsAny(h, "*/\\ \t:?&=@\"'") {
+		return false
+	}
+	if strings.HasPrefix(h, ".") || strings.HasSuffix(h, ".") {
+		return false
+	}
+	// localhost y las IP locales ya están compilados; un host de instalación
+	// tiene que ser un nombre con punto (api.municipio.gob.ar) o una IP.
+	return strings.Contains(h, ".")
+}
+
+func yaEsta(h string) bool {
+	for _, p := range HostsAutorizados() {
+		if p == h {
+			return true
+		}
+	}
+	return false
+}
+
 // isAllowedServletURL exige HTTPS —o HTTP solo contra local— y que el host esté
-// en la lista de arriba, escrito completo.
+// en la lista: los compilados de arriba más los que agregó el administrador al
+// instalar (hostsDeInstalacion).
 func isAllowedServletURL(u string) bool {
 	parsed, err := url.Parse(u)
 	if err != nil {
@@ -176,7 +250,7 @@ func isAllowedServletURL(u string) bool {
 
 	// Comparación EXACTA: sin sufijos, sin HasSuffix. Un "termina con" es lo
 	// que hacía que cualquier subdominio de un hosting compartido pasara.
-	for _, permitido := range HostsPermitidos {
+	for _, permitido := range HostsAutorizados() {
 		if host == permitido {
 			return true
 		}

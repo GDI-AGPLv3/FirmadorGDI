@@ -7,13 +7,31 @@
   <Package
     Name="FirmadorGDI"
     Manufacturer="Tecnología Acuario"
-    Version="1.5.0"
+    Version="1.6.0"
     UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
     Language="1033"
     InstallerVersion="500"
     Compressed="yes">
 
     <MajorUpgrade DowngradeErrorMessage="Ya tenés una versión más nueva de FirmadorGDI instalada." />
+
+    <!-- GDI-532: el servidor del municipio, para instalaciones on-premise.
+         Sin valor por defecto: una instalación SaaS no pregunta nada y el
+         programa usa los hosts de GDI que trae compilados.
+
+         Se pasa en la instalación:
+           msiexec /i FirmadorGDI.msi SERVIDORGDI="api.su-municipio.gob.ar"
+
+         Va a HKLM (abajo), que pide permisos de administrador: el MSI corre
+         elevado y puede escribirlo, pero después el funcionario -que no es
+         admin de su máquina- no lo puede cambiar. Un archivo junto al .exe o
+         HKCU los escribe el propio usuario, y con eso cualquier cosa que corra
+         como el usuario se autorizaría sola (FG-001 con pasos extra).
+
+         Secure="yes" hace falta para que la propiedad sobreviva al pasaje a la
+         parte elevada de la instalación; sin eso el valor se pierde, la clave
+         queda vacía y el municipio no puede firmar sin ningún error visible. -->
+    <Property Id="SERVIDORGDI" Secure="yes" />
 
     <!-- GDI-341: los archivos van ADENTRO del .msi.
          Sin esto WiX los deja en un `cab1.cab` al lado, y el instalador solo no
@@ -47,6 +65,18 @@
       </Component>
     </ComponentGroup>
 
+    <!-- GDI-532: los hosts autorizados de ESTA instalación. Los lee
+         internal/hostsconfig al arrancar y se suman a los compilados.
+         Condition: el componente solo se instala si se pasó un servidor, así
+         que una instalación SaaS no deja la clave creada y vacía. -->
+    <ComponentGroup Id="ServidorComponents" Directory="INSTALLFOLDER">
+      <Component Id="ServidorDelMunicipio" Guid="D4E5F6A7-B8C9-0123-DEF1-234567890123" Condition="SERVIDORGDI">
+        <RegistryKey Root="HKLM" Key="SOFTWARE\GDILatam\FirmadorGDI">
+          <RegistryValue Name="HostsAutorizados" Type="string" Value="[SERVIDORGDI]" KeyPath="yes" />
+        </RegistryKey>
+      </Component>
+    </ComponentGroup>
+
     <ComponentGroup Id="ShortcutComponents" Directory="AppMenuFolder">
       <Component Id="StartMenuShortcut" Guid="C3D4E5F6-A7B8-9012-CDEF-123456789012">
         <Shortcut Id="AppShortcut"
@@ -66,6 +96,7 @@
 
     <Feature Id="MainFeature" Title="FirmadorGDI" Level="1">
       <ComponentGroupRef Id="MainComponents" />
+      <ComponentGroupRef Id="ServidorComponents" />
       <ComponentGroupRef Id="ShortcutComponents" />
     </Feature>
 

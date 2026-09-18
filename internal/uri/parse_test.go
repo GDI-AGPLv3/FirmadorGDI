@@ -280,3 +280,93 @@ func TestServidorHostSaleDelLink(t *testing.T) {
 		}
 	}
 }
+
+// ── Hosts de la instalación (GDI-532) ───────────────────────────────────────
+//
+// El administrador puede autorizar el servidor de su municipio al instalar. Lo
+// que NO puede es meter por esa puerta algo que reabra FG-001: un sufijo, un
+// comodín o una URL entera.
+
+func TestElHostDeLaInstalacionSeAcepta(t *testing.T) {
+	defer resetHostsDeInstalacion()
+
+	aceptados := AgregarHostsAutorizados([]string{"api.su-municipio.gob.ar"})
+	if len(aceptados) != 1 {
+		t.Fatalf("no se aceptó el host del municipio: %v", aceptados)
+	}
+
+	raw := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11" +
+		"&rtservlet=" + url.QueryEscape("https://api.su-municipio.gob.ar/digital-signature/storage") +
+		"&stservlet=" + url.QueryEscape("https://api.su-municipio.gob.ar/digital-signature/storage")
+	if _, err := Parse(raw); err != nil {
+		t.Errorf("rechazó el servidor del municipio ya autorizado: %v", err)
+	}
+}
+
+// El negativo que importa: por esta puerta no entra nada que autorice a otros.
+func TestLaInstalacionNoPuedeMeterSufijosNiComodines(t *testing.T) {
+	defer resetHostsDeInstalacion()
+
+	basura := []string{
+		".gob.ar",                       // sufijo: autorizaría medio país
+		".fly.dev",                      // el sufijo de FG-001, otra vez
+		"*.muni.gob.ar",                 // comodín
+		"*",                             // todo
+		"https://api.muni.gob.ar",       // URL, no host
+		"api.muni.gob.ar/algo",          // con path
+		"api.muni.gob.ar:8443",          // con puerto
+		"api muni.gob.ar",               // con espacio
+		"localhost",                     // sin punto: ya está compilado
+		"",                              // vacío
+	}
+	aceptados := AgregarHostsAutorizados(basura)
+	if len(aceptados) != 0 {
+		t.Errorf("se colaron hosts inválidos: %v", aceptados)
+	}
+
+	// y ninguno de esos habilita a un tercero
+	for _, servlet := range []string{"https://evil.fly.dev", "https://evil.gob.ar", "https://api.muni.gob.ar"} {
+		raw := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11" +
+			"&rtservlet=" + url.QueryEscape(servlet) + "&stservlet=" + url.QueryEscape(servlet)
+		if _, err := Parse(raw); err == nil {
+			t.Errorf("quedó autorizado %q después de intentar meter basura en la lista", servlet)
+		}
+	}
+}
+
+// Un host de la instalación no pisa ni duplica los compilados.
+func TestLosCompiladosSiguenEstando(t *testing.T) {
+	defer resetHostsDeInstalacion()
+
+	antes := len(HostsAutorizados())
+	AgregarHostsAutorizados([]string{"api.su-municipio.gob.ar", "api.su-municipio.gob.ar", "enlace-arg.gdilatam.com"})
+	despues := HostsAutorizados()
+
+	if len(despues) != antes+1 {
+		t.Errorf("se esperaba 1 host nuevo (sin duplicar el repetido ni el ya compilado), antes=%d despues=%d", antes, len(despues))
+	}
+	for _, compilado := range HostsPermitidos {
+		if !contiene(despues, compilado) {
+			t.Errorf("desapareció el host compilado %q", compilado)
+		}
+	}
+}
+
+func TestSeNormalizaAMinusculas(t *testing.T) {
+	defer resetHostsDeInstalacion()
+	AgregarHostsAutorizados([]string{"API.Su-Municipio.GOB.AR"})
+	if !contiene(HostsAutorizados(), "api.su-municipio.gob.ar") {
+		t.Error("el host no se normalizó a minúsculas")
+	}
+}
+
+func contiene(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
+}
+
+func resetHostsDeInstalacion() { hostsDeInstalacion = nil }

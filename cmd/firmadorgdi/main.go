@@ -24,6 +24,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/gdi-latam/firmadorgdi/internal/hostsconfig"
 	"github.com/gdi-latam/firmadorgdi/internal/pkcs11"
 	"github.com/gdi-latam/firmadorgdi/internal/storage"
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
@@ -92,6 +93,19 @@ func main() {
 // handleURI parsea y despacha: un documento o una tanda.
 func handleURI(rawURI string) error {
 	log.Println("URI recibida:", rawURI)
+
+	// Los hosts que el administrador autorizó al instalar, ANTES de validar la
+	// URI: si no se cargan primero, el servidor del municipio se rechaza.
+	// Solo se leen de HKLM, que pide permisos de administrador — ver
+	// internal/hostsconfig y el comentario de hostsDeInstalacion en uri.
+	if extra := hostsconfig.Leer(); len(extra) > 0 {
+		aceptados := uri.AgregarHostsAutorizados(extra)
+		if len(aceptados) < len(extra) {
+			log.Printf("ATENCION: %d de %d hosts de la instalación quedaron AFUERA por inválidos "+
+				"(se piden hosts pelados, sin esquema ni barras ni comodines). Aceptados: %v",
+				len(extra)-len(aceptados), len(extra), aceptados)
+		}
+	}
 
 	params, err := uri.Parse(rawURI)
 	if err != nil {
