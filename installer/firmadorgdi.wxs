@@ -7,7 +7,7 @@
   <Package
     Name="FirmadorGDI"
     Manufacturer="Tecnología Acuario"
-    Version="1.6.0"
+    Version="1.7.0"
     UpgradeCode="A1B2C3D4-E5F6-7890-ABCD-EF1234567890"
     Language="1033"
     InstallerVersion="500"
@@ -32,6 +32,9 @@
          parte elevada de la instalación; sin eso el valor se pierde, la clave
          queda vacía y el municipio no puede firmar sin ningún error visible. -->
     <Property Id="SERVIDORGDI" Secure="yes" />
+    <!-- Arranca en "nube", que es el caso de casi todos: el que instala no
+         tiene que entender nada para seguir. -->
+    <Property Id="TIPOINSTALACION" Value="nube" Secure="yes" />
 
     <!-- GDI-341: los archivos van ADENTRO del .msi.
          Sin esto WiX los deja en un `cab1.cab` al lado, y el instalador solo no
@@ -104,6 +107,86 @@
     <WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
     <WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
     <ui:WixUI Id="WixUI_Minimal" />
+
+    <!-- GDI-532: la pantalla que pregunta el servidor del municipio.
+         Existe para que el area de sistemas no dependa de acordarse del
+         parametro de linea de comandos. Se puede seguir pasando por
+         `msiexec /i ... SERVIDORGDI="..."` y entonces la pantalla aparece con
+         el valor ya cargado.
+
+         Se muestra DESPUES del welcome y antes de instalar, y solo en una
+         instalacion nueva (NOT Installed): en un upgrade no se vuelve a
+         preguntar, el valor ya esta en HKLM. -->
+    <UI>
+      <Dialog Id="ServidorDlg" Width="370" Height="270" Title="[ProductName] — Servidor">
+        <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="WixUI_Bmp_Banner" />
+        <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="330" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="{\WixUI_Font_Title}¿Dónde está tu GDI?" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="330" Height="15" Transparent="yes" NoPrefix="yes"
+                 Text="El FirmadorGDI solo le obedece al servidor de tu organismo." />
+
+        <Control Id="Tipo" Type="RadioButtonGroup" Property="TIPOINSTALACION" X="24" Y="62" Width="330" Height="46">
+          <RadioButtonGroup Property="TIPOINSTALACION">
+            <RadioButton Value="nube"   X="0" Y="0"  Width="320" Height="18" Text="Uso GDI Latam en la nube (gdilatam.com)" />
+            <RadioButton Value="propia" X="0" Y="24" Width="320" Height="18" Text="Mi organismo tiene GDI en su propio servidor" />
+          </RadioButtonGroup>
+        </Control>
+
+        <Control Id="Etiqueta" Type="Text" X="40" Y="116" Width="310" Height="12" NoPrefix="yes"
+                 Text="Dirección de ese servidor:" EnableCondition='TIPOINSTALACION = "propia"' DisableCondition='TIPOINSTALACION &lt;&gt; "propia"' />
+        <Control Id="ServidorEdit" Type="Edit" X="40" Y="130" Width="310" Height="18" Property="SERVIDORGDI" Indirect="no" EnableCondition='TIPOINSTALACION = "propia"' DisableCondition='TIPOINSTALACION &lt;&gt; "propia"' />
+        <Control Id="Ejemplo1" Type="Text" X="40" Y="152" Width="310" Height="12" NoPrefix="yes"
+                 Text="Ejemplo: api.mi-municipio.gob.ar (solo el nombre, sin https:// ni barras)" EnableCondition='TIPOINSTALACION = "propia"' DisableCondition='TIPOINSTALACION &lt;&gt; "propia"' />
+        <Control Id="Ejemplo2" Type="Text" X="40" Y="165" Width="310" Height="12" NoPrefix="yes"
+                 Text="Si son varios, separalos con punto y coma." EnableCondition='TIPOINSTALACION = "propia"' DisableCondition='TIPOINSTALACION &lt;&gt; "propia"' />
+
+        <Control Id="Aviso1" Type="Text" X="24" Y="196" Width="330" Height="12" NoPrefix="yes"
+                 Text="Esto lo cambia solo un administrador: si hay que corregirlo, se reinstala." />
+        <Control Id="Aviso2" Type="Text" X="24" Y="209" Width="330" Height="12" NoPrefix="yes"
+                 Text="En la duda, elegí la primera opción: es la que usa casi todo el mundo." />
+
+        <Control Id="Instalar" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="Instalar">
+          <Publish Property="SERVIDORGDI" Value="{}" Order="1" Condition='TIPOINSTALACION = "nube"' />
+          <Publish Event="SpawnDialog" Value="ServidorFaltaDlg" Order="2" Condition='TIPOINSTALACION = "propia" AND NOT SERVIDORGDI' />
+          <Publish Event="SpawnDialog" Value="ServidorInvalidoDlg" Order="3" Condition='TIPOINSTALACION = "propia" AND (SERVIDORGDI &gt;&lt; "/" OR SERVIDORGDI &gt;&lt; ":" OR SERVIDORGDI &gt;&lt; "*" OR SERVIDORGDI &gt;&lt; " ")' />
+          <Publish Event="EndDialog" Value="Return" Order="4" Condition='TIPOINSTALACION = "nube" OR (SERVIDORGDI AND NOT (SERVIDORGDI &gt;&lt; "/" OR SERVIDORGDI &gt;&lt; ":" OR SERVIDORGDI &gt;&lt; "*" OR SERVIDORGDI &gt;&lt; " "))' />
+        </Control>
+        <Control Id="Cancelar" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancelar">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+      </Dialog>
+
+      <!-- El programa rechaza los hosts mal escritos igual, pero ahí el
+           funcionario se entera recién cuando no puede firmar. Mejor acá. -->
+      <Dialog Id="ServidorFaltaDlg" Width="280" Height="100" Title="[ProductName]" NoMinimize="yes">
+        <Control Id="Texto1" Type="Text" X="20" Y="18" Width="240" Height="12" NoPrefix="yes"
+                 Text="Elegiste servidor propio: escribí su dirección." />
+        <Control Id="Texto2" Type="Text" X="20" Y="36" Width="240" Height="12" NoPrefix="yes"
+                 Text="Si en realidad usás GDI en la nube, elegí la primera opción." />
+        <Control Id="Aceptar" Type="PushButton" X="110" Y="70" Width="56" Height="17" Default="yes" Cancel="yes" Text="Volver">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="ServidorInvalidoDlg" Width="280" Height="110" Title="[ProductName]" NoMinimize="yes">
+        <Control Id="Texto1" Type="Text" X="20" Y="15" Width="240" Height="12" NoPrefix="yes"
+                 Text="Escribí solo el nombre del servidor:" />
+        <Control Id="Texto2" Type="Text" X="20" Y="30" Width="240" Height="12" NoPrefix="yes"
+                 Text="sin https://, sin barras, sin puerto y sin comodines." />
+        <Control Id="Texto3" Type="Text" X="20" Y="50" Width="240" Height="12" NoPrefix="yes"
+                 Text="Por ejemplo: api.mi-municipio.gob.ar" />
+        <Control Id="Aceptar" Type="PushButton" X="110" Y="80" Width="56" Height="17" Default="yes" Cancel="yes" Text="Volver">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <InstallUISequence>
+        <Show Dialog="ServidorDlg" Before="ProgressDlg" Condition="NOT Installed" />
+      </InstallUISequence>
+    </UI>
 
   </Package>
 </Wix>

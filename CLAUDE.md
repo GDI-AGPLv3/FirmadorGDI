@@ -42,7 +42,10 @@ haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 > (`TestLaListaNoTieneSufijos`) falla si alguien vuelve a poner uno.
 >
 > **Una instalación on-premise autoriza su propio servidor EN LA INSTALACIÓN**
-> (1.6.0, GDI-532), sin compilar nada:
+> (GDI-532), sin compilar nada. Desde la 1.7.0 el asistente lo **pregunta**: dos
+> opciones —«Uso GDI Latam en la nube» (marcada por defecto) y «Mi organismo
+> tiene GDI en su propio servidor», que habilita el campo de la dirección—. Sigue
+> andando el parámetro, para instalaciones desatendidas:
 > `msiexec /i FirmadorGDI.msi SERVIDORGDI="api.su-municipio.gob.ar"`.
 > El host queda en `HKLM\SOFTWARE\GDILatam\FirmadorGDI`, valor `HostsAutorizados`, que
 > **pide permisos de administrador**: el MSI corre elevado y puede escribirlo; el
