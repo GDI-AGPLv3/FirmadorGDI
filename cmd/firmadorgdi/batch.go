@@ -72,7 +72,7 @@ func handleBatch(params *uri.Params) error {
 	cancelar := func(motivo, estado string) {
 		cancelarTandaEntera(params, manifest, motivo, estado)
 	}
-	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, total), cancelar); err != nil {
+	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, total, params.ServidorHost()), cancelar); err != nil {
 		return err
 	}
 	log.Println("Login OK — firmando la tanda")
