@@ -28,6 +28,14 @@ haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 > Sin la lista, un link ajeno lograba que el token firmara documentos que el
 > funcionario nunca vio, y con el modo lote son cinco por un solo PIN.
 >
+> **El dialogo del PIN dice a que servidor van las firmas** (1.5.0). Es la
+> defensa que no depende de la lista: si alguien logra que se autorice un host
+> —convenciendo al area de sistemas, por ejemplo—, el funcionario ve el nombre
+> raro antes de poner el PIN. El host se setea con `.Text` DESPUES del
+> `XamlReader::Load`, nunca interpolado en el XAML (ver FG-009), y hay tests en
+> `internal/ui/dialog_windows_test.go` que lo exigen y que validan que el XAML
+> sea XML valido.
+>
 > **Nada de sufijos en esa lista** (FG-001, 04/09/2026): hasta la versión 1.4.2
 > decía `.fly.dev`, y fly.dev es hosting compartido — cualquiera publicaba
 > `lo-que-sea.fly.dev` con TLS válido y quedaba autorizado. Un test

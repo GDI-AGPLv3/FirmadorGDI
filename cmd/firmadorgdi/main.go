@@ -125,7 +125,7 @@ func handleSign(params *uri.Params) error {
 	cancelar := func(string, string) {
 		_ = storage.PostCancel(params.StServlet, params.SessionID)
 	}
-	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, 0), cancelar); err != nil {
+	if err := pedirPINYLoguear(token, dialogoDeToken(tokenInfo, 0, params.ServidorHost()), cancelar); err != nil {
 		return err
 	}
 	log.Println("Login OK")
@@ -210,9 +210,12 @@ func firmarDigests(
 }
 
 // dialogoDeToken arma lo que ve el funcionario. batchCount en 0 o 1 es la firma
-// de a una y el cartel no cambia.
-func dialogoDeToken(info *pkcs11.TokenInfo, batchCount int) ui.TokenInfo {
+// de a una y el cartel no cambia. `servidor` es el host al que van las firmas y
+// se muestra siempre: es lo único que le permite al funcionario notar que el
+// link lo mandó otro.
+func dialogoDeToken(info *pkcs11.TokenInfo, batchCount int, servidor string) ui.TokenInfo {
 	return ui.TokenInfo{
+		Servidor:     servidor,
 		Label:        info.Label,
 		Manufacturer: info.Manufacturer,
 		Subject:      info.Subject,

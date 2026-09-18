@@ -29,6 +29,7 @@ func ShowPINDialog(info TokenInfo) (PINResult, error) {
 		"AGDI_VALID="+sanitize(info.ValidUntil),
 		"AGDI_WRONG_PIN="+boolStr(info.WrongPIN),
 		"AGDI_BATCH_COUNT="+strconv.Itoa(info.BatchCount),
+		"AGDI_SERVER="+sanitize(info.Servidor),
 		"AGDI_LOGO_B64="+logoPNGB64,
 	)
 
@@ -326,6 +327,13 @@ if ($valid) {
         </StackPanel>
       </Border>
       $batchXaml
+      <Border Background="#1E293B" CornerRadius="8" Padding="16,12" Margin="0,0,0,20" BorderBrush="#334155" BorderThickness="1">
+        <StackPanel>
+          <TextBlock Foreground="#94A3B8" FontSize="11" FontWeight="SemiBold" Text="LAS FIRMAS VAN A ESTE SERVIDOR" Margin="0,0,0,6"/>
+          <TextBlock x:Name="txtServer" Foreground="#38BDF8" FontSize="15" FontWeight="SemiBold" TextWrapping="Wrap" FontFamily="Consolas"/>
+          <TextBlock Foreground="#64748B" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" Text="Si no lo reconoces, no pongas el PIN: cancela y avisa a sistemas."/>
+        </StackPanel>
+      </Border>
       $wrongPinXaml
       <TextBlock Text="PIN del token" Foreground="#94A3B8" FontSize="12" FontWeight="SemiBold" Margin="0,0,0,8"/>
       <PasswordBox x:Name="txtPin" Style="{StaticResource PinBox}" Margin="0,0,0,24"/>
@@ -362,6 +370,14 @@ if ($env:AGDI_LOGO_B64) {
         $imgLogo = $win.FindName('imgLogo')
         if ($imgLogo) { $imgLogo.Source = $logoBmp }
     } catch { }
+}
+
+# El host va por .Text y NUNCA interpolado en el XAML: un "&" en el texto deja
+# el XML invalido y el funcionario se queda sin dialogo de PIN (FG-009).
+$txtServer = $win.FindName('txtServer')
+if ($txtServer) {
+    if ($env:AGDI_SERVER) { $txtServer.Text = $env:AGDI_SERVER }
+    else { $txtServer.Text = '(el link no dice a que servidor)' ; $txtServer.Foreground = '#F87171' }
 }
 
 $txtPin   = $win.FindName('txtPin')

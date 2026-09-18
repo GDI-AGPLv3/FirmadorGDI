@@ -130,7 +130,13 @@ func TestSoloSeLeObedeceALosServidoresPropios(t *testing.T) {
 		"https://demo-backend-prd.fly.dev",
 		"https://aries-backend-prd.fly.dev",
 		"https://arg-backend-prd.fly.dev",
-		"https://enlace.gdilatam.com",
+
+		// GDI-535: el dominio propio de cada ambiente. Es a donde va todo
+		// cuando los cuatro backends dejen de armar el enlace con su fly.dev.
+		"https://enlace-dev.gdilatam.com",
+		"https://enlace-aries.gdilatam.com",
+		"https://enlace-arg.gdilatam.com",
+		"https://enlace-demo.gdilatam.com",
 		"http://localhost:8000",
 		"http://127.0.0.1:8000",
 	}
@@ -161,9 +167,14 @@ func TestSoloSeLeObedeceALosServidoresPropios(t *testing.T) {
 		"https://api.gdilatam.com",
 		"https://arg.gdilatam.com",
 
+		// El sin-sufijo se dio de baja el 17/09 (DNS y certificado): el nombre
+		// limpio apuntando a DEV confundía. Si vuelve, se agrega a propósito.
+		"https://enlace.gdilatam.com",
+
 		// Prefijo/sufijo pegado a un host que sí está en la lista.
-		"https://enlace.gdilatam.com.evil.net",
-		"https://xenlace.gdilatam.com",
+		"https://enlace-arg.gdilatam.com.evil.net",
+		"https://xenlace-arg.gdilatam.com",
+		"https://enlace-arg.gdilatam.com.br",
 	}
 	for _, servlet := range ajenos {
 		raw := base + "&rtservlet=" + url.QueryEscape(servlet) +
@@ -196,5 +207,76 @@ func TestLaTandaTambienExigeDominioPropio(t *testing.T) {
 
 	if _, err := Parse(raw); err == nil {
 		t.Fatal("una tanda contra un servidor ajeno pasó el control")
+	}
+}
+
+// El mensaje de error tiene que decir la verdad: "no está autorizado" cuando el
+// problema es el host, y "debe ser HTTPS" solo cuando de verdad no es HTTPS.
+//
+// Nace de un caso real (18/09/2026): el backend de DEV empezó a armar el enlace
+// con https://enlace-dev.gdilatam.com/... —HTTPS válido— y la 1.4.3, que no
+// tenía ese host, lo rechazó con "rtservlet debe ser HTTPS". El diálogo mandó a
+// revisar el certificado cuando el problema era la lista de hosts.
+func TestElErrorDiceElMotivoReal(t *testing.T) {
+	base := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11"
+
+	casos := []struct {
+		nombre  string
+		servlet string
+		espera  string
+	}{
+		{"host no autorizado, pero HTTPS", "https://ajeno.example.com", "no está autorizado"},
+		{"host propio de otro ambiente mal escrito", "https://enlace-xxx.gdilatam.com", "no está autorizado"},
+		{"de verdad no es HTTPS", "http://ajeno.example.com", "debe ser HTTPS"},
+		{"host autorizado pero sin TLS", "http://enlace-arg.gdilatam.com", "debe ser HTTPS"},
+	}
+
+	for _, c := range casos {
+		raw := base + "&rtservlet=" + url.QueryEscape(c.servlet) +
+			"&stservlet=" + url.QueryEscape(c.servlet)
+		_, err := Parse(raw)
+		if err == nil {
+			t.Errorf("%s: aceptó %q", c.nombre, c.servlet)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.espera) {
+			t.Errorf("%s: el error dice %q y debería contener %q", c.nombre, err.Error(), c.espera)
+		}
+	}
+}
+
+// El error del host tiene que nombrar el host, que es el dato que sirve para
+// entender qué pasó — y para que el funcionario pueda reconocerlo o no.
+func TestElErrorNombraElHost(t *testing.T) {
+	raw := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11" +
+		"&rtservlet=" + url.QueryEscape("https://servidor-raro.example.com") +
+		"&stservlet=" + url.QueryEscape("https://servidor-raro.example.com")
+	_, err := Parse(raw)
+	if err == nil {
+		t.Fatal("aceptó un servidor ajeno")
+	}
+	if !strings.Contains(err.Error(), "servidor-raro.example.com") {
+		t.Errorf("el error no nombra el host: %q", err.Error())
+	}
+}
+
+// El diálogo del PIN muestra a dónde van las firmas, y ese dato sale de acá.
+func TestServidorHostSaleDelLink(t *testing.T) {
+	casos := map[string]string{
+		"https://enlace-arg.gdilatam.com/digital-signature/storage": "enlace-arg.gdilatam.com",
+		"https://enlace-dev.gdilatam.com/digital-signature/storage": "enlace-dev.gdilatam.com",
+		"http://localhost:8000/digital-signature/storage":           "localhost",
+	}
+	for servlet, esperado := range casos {
+		raw := "gdifirma://sign?ver=1_0&fileid=ABC&id=SES1&keystore=PKCS11" +
+			"&rtservlet=" + url.QueryEscape(servlet) +
+			"&stservlet=" + url.QueryEscape(servlet)
+		p, err := Parse(raw)
+		if err != nil {
+			t.Fatalf("no parseo %q: %v", servlet, err)
+		}
+		if got := p.ServidorHost(); got != esperado {
+			t.Errorf("ServidorHost() de %q = %q, se esperaba %q", servlet, got, esperado)
+		}
 	}
 }
