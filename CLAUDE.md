@@ -136,7 +136,15 @@ que el binario lo diga.
    (`https://firmadorgdi.gdilatam.com/FirmadorGDI-latest.msi`, que es el link que
    muestra el frontend al firmar).
 7. El `.pkg` de macOS sale del workflow `macOS` (artefacto `FirmadorGDI-macos`
-   de la corrida del tag). Ver la sección **macOS** más abajo.
+   de la corrida del tag). Se publica **en el mismo bucket y dominio** que el
+   MSI, como `FirmadorGDI-latest.pkg`
+   (`https://firmadorgdi.gdilatam.com/FirmadorGDI-latest.pkg`): el frontend
+   elige `.msi` o `.pkg` según la computadora (`useDescargaFirmador.ts` en
+   `GDI-FRONTEND`). No hay un dominio aparte para Mac. Ver la sección **macOS**
+   más abajo.
+
+   ⚠️ **Orden:** el `.pkg` se publica ANTES de que el frontend con el link de
+   Mac llegue a un ambiente. Al revés, una Mac recibe un link que da 404.
 
 **No hay que desinstalar la versión anterior:** el `UpgradeCode` es fijo y el
 `.wxs` declara `MajorUpgrade`, así que Windows reemplaza sola la que esté.
