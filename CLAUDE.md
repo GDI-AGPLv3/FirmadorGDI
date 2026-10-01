@@ -179,6 +179,31 @@ paisaje y deja de leerse.
 > (`GDI-Backend/tests/test_gdi341_version_del_firmador.py`), pero solo corre si
 > los dos repos están uno al lado del otro.
 
+## Qué driver se usa cuando hay varios instalados (1.8.0)
+
+`pkcs11.Open` recorre `KnownDrivers` y usa **el primero que ve un token
+conectado y lo puede abrir** (`internal/pkcs11/seleccion.go`). Hasta la 1.7.0
+usaba el primero que *cargaba*: en una máquina con los middlewares de Feitian y
+de SafeNet y un token SafeNet enchufado, el de Feitian cargaba, decía "cero
+tokens" y el programa cortaba con "no hay tokens conectados" sin preguntarle
+nunca al de SafeNet.
+
+- El orden de `KnownDrivers` es solo el desempate: los del fabricante antes que
+  OpenSC, que es genérico y a veces "ve" tokens de otra marca sin poder usarlos.
+- Los drivers descartados se cierran (`Finalize` + `Destroy`) antes de probar el
+  siguiente: dos middlewares inicializados sobre el mismo lector se pisan.
+- Los errores ya no se confunden: sin ningún driver, *"no se encontró driver
+  PKCS#11 compatible"* (la documentación de usuario cita ese texto tal cual);
+  con drivers pero sin token, *"no hay tokens conectados"* y la lista de los
+  que se probaron.
+- El log dice qué driver se eligió y por qué se descartó cada uno de los otros.
+- Con **dos tokens enchufados a la vez** toma el primero que encuentra. No hay
+  selector; es una card aparte si aparece el caso.
+
+La decisión está cubierta por tests con drivers de mentira
+(`seleccion_test.go`). **No está probada con dos middlewares reales**: hace
+falta una PC con los dos instalados y el token del segundo enchufado.
+
 ## macOS (1.8.0)
 
 El mismo programa, con tres diferencias que no son de forma:

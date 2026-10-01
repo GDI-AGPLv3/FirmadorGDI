@@ -17,8 +17,8 @@ import (
 var ErrTokenLocked = errors.New("token bloqueado por PIN incorrecto demasiadas veces")
 
 // KnownDrivers (los drivers conocidos, que se prueban en orden hasta encontrar
-// uno que cargue) está en drivers_<plataforma>.go: las rutas son las del
-// middleware de cada fabricante y no tienen nada en común entre sistemas.
+// uno que vea un token conectado) está en drivers_<plataforma>.go: las rutas son
+// las del middleware de cada fabricante y no tienen nada en común entre sistemas.
 
 // Token representa una sesión abierta con un token PKCS#11.
 type Token struct {
@@ -38,57 +38,27 @@ type TokenInfo struct {
 	ValidUntil   string // "31/12/2030" — vacío si el cert no es legible sin login
 }
 
-// Open detecta el primer token conectado y abre una sesión.
+// Open detecta el token conectado y abre una sesión.
 // Intenta leer el certificado público (sin login) para poblar SerialNumber y ValidUntil.
 // driverPath puede ser "" para autodetectar entre KnownDrivers.
+//
+// Con varios drivers instalados usa el que VE el token, no el primero que
+// carga: ver seleccion.go.
 func Open(driverPath string) (*Token, *TokenInfo, error) {
 	drivers := KnownDrivers
 	if driverPath != "" {
 		drivers = []string{driverPath}
 	}
 
-	var ctx *p11.Ctx
-	for _, d := range drivers {
-		c := p11.New(d)
-		if c == nil {
-			continue
-		}
-		if err := c.Initialize(); err != nil {
-			c.Destroy()
-			continue
-		}
-		ctx = c
-		break
-	}
-	if ctx == nil {
-		return nil, nil, fmt.Errorf("no se encontró driver PKCS#11 compatible")
-	}
-
-	slots, err := ctx.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("no hay tokens conectados")
-	}
-
-	tokenInfo, err := ctx.GetTokenInfo(slots[0])
+	elegido, err := elegirDriver(drivers, cargarModulo)
 	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("GetTokenInfo: %w", err)
+		return nil, nil, err
 	}
 
-	session, err := ctx.OpenSession(slots[0], p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
-	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("OpenSession: %w", err)
-	}
-
-	t := &Token{ctx: ctx, session: session}
+	t := &Token{ctx: elegido.mod.(ctxModulo).Ctx, session: elegido.session}
 	info := &TokenInfo{
-		Label:        tokenInfo.Label,
-		Manufacturer: tokenInfo.ManufacturerID,
+		Label:        elegido.info.Label,
+		Manufacturer: elegido.info.ManufacturerID,
 	}
 
 	// CKO_CERTIFICATE son objetos públicos — intentar leer sin login para poblar el diálogo.
