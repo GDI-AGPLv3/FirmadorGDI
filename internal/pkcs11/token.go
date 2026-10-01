@@ -16,12 +16,9 @@ import (
 // ErrTokenLocked se devuelve cuando el token está bloqueado por demasiados PINs incorrectos.
 var ErrTokenLocked = errors.New("token bloqueado por PIN incorrecto demasiadas veces")
 
-// Drivers conocidos. Se prueban en orden hasta encontrar uno que cargue.
-var KnownDrivers = []string{
-	`C:\Windows\System32\eps2003csp11.dll`,  // Feitian ePass2003
-	`C:\Windows\System32\eTPKCS11.dll`,      // SafeNet eToken
-	`C:\Windows\System32\opensc-pkcs11.dll`, // OpenSC (genérico)
-}
+// KnownDrivers (los drivers conocidos, que se prueban en orden hasta encontrar
+// uno que cargue) está en drivers_<plataforma>.go: las rutas son las del
+// middleware de cada fabricante y no tienen nada en común entre sistemas.
 
 // Token representa una sesión abierta con un token PKCS#11.
 type Token struct {

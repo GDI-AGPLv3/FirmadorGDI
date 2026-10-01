@@ -3,11 +3,12 @@
 package hostsconfig
 
 import (
-	"log"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
 )
+
+const origen = RutaRegistro + `\` + NombreValor
 
 // Leer devuelve los hosts que el administrador autorizó al instalar.
 //
@@ -38,20 +39,4 @@ func Leer() []string {
 	return limpiar(strings.FieldsFunc(crudo, func(r rune) bool {
 		return r == ';' || r == ',' || r == ' '
 	}))
-}
-
-func limpiar(valores []string) []string {
-	out := make([]string, 0, len(valores))
-	for _, v := range valores {
-		v = strings.TrimSpace(v)
-		if v != "" {
-			out = append(out, v)
-		}
-	}
-	if len(out) > 0 {
-		// Al log, siempre: si el municipio no puede firmar, lo primero que se
-		// pregunta es qué host quedó autorizado en esa máquina.
-		log.Printf("hosts autorizados en la instalación (%s\\%s): %v", RutaRegistro, NombreValor, out)
-	}
-	return out
 }

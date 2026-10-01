@@ -1,8 +1,8 @@
 # FirmadorGDI — contexto del repo
 
-Cliente de escritorio (Go, Windows) que firma PDFs con el token físico del
-funcionario. Lo lanza Chrome vía el scheme `gdifirma://`. Repo **público**,
-AGPL-3.0.
+Cliente de escritorio (Go; Windows y, desde la 1.8.0, macOS) que firma PDFs con
+el token físico del funcionario. Lo lanza el navegador vía el scheme
+`gdifirma://`. Repo **público**, AGPL-3.0.
 
 ## Lo primero que hay que saber: el binario es agnóstico del ambiente
 
@@ -135,6 +135,8 @@ que el binario lo diga.
 6. Publicarlo como `FirmadorGDI-latest.msi`
    (`https://firmadorgdi.gdilatam.com/FirmadorGDI-latest.msi`, que es el link que
    muestra el frontend al firmar).
+7. El `.pkg` de macOS sale del workflow `macOS` (artefacto `FirmadorGDI-macos`
+   de la corrida del tag). Ver la sección **macOS** más abajo.
 
 **No hay que desinstalar la versión anterior:** el `UpgradeCode` es fijo y el
 `.wxs` declara `MajorUpgrade`, así que Windows reemplaza sola la que esté.
@@ -169,17 +171,89 @@ paisaje y deja de leerse.
 > (`GDI-Backend/tests/test_gdi341_version_del_firmador.py`), pero solo corre si
 > los dos repos están uno al lado del otro.
 
+## macOS (1.8.0)
+
+El mismo programa, con tres diferencias que no son de forma:
+
+- **El link no llega por argv.** Windows lanza `firmadorgdi.exe "gdifirma://…"`.
+  macOS abre `FirmadorGDI.app` **sin argumentos** y le manda el link como un
+  Apple Event. `main()` lo espera con `ui.URIDeArranque()`; sin eso el programa
+  arranca, no ve nada y dice "está instalado y listo" en vez de firmar. Quién
+  atiende `gdifirma://` lo declara `installer/macos/Info.plist`
+  (`CFBundleURLTypes`): no hay nada que escribir al instalar, y `--register`
+  solo fuerza la relectura (`lsregister`).
+- **Los diálogos son AppKit vía cgo** (`internal/ui/dialog_darwin.go`), no un
+  script. El borrador anterior usaba `osascript` con el label del token
+  interpolado en el AppleScript: una comilla ahí se ejecutaba como código. El
+  texto del diálogo lo arma `textoDelPIN` (`internal/ui/texto_pin.go`, sin build
+  tag para poder probarlo en Windows) y dice lo mismo que el de Windows: token,
+  cuántos documentos y **a qué servidor van las firmas**.
+- **La lista de hosts on-premise vive en un archivo de root**, no en el registro:
+  `/Library/Application Support/GDILatam/FirmadorGDI/HostsAutorizados`, un host
+  por línea. Es el equivalente de HKLM — hace falta `sudo` para escribirlo — y
+  `hostsconfig.Leer()` lo **ignora** si el archivo o su carpeta no son de root o
+  los puede escribir otro. El instalador **no lo pregunta** (el de Windows sí):
+  la última pantalla le deja al administrador los dos comandos. Sobrevive a las
+  actualizaciones: el `.pkg` solo toca `/Applications`.
+
+El log está en `~/Library/Logs/FirmadorGDI/firmadorgdi.log` (el `%TEMP%` de una
+Mac es una ruta por usuario que nadie encuentra por teléfono).
+
+### Cómo se arma el `.pkg`
+
+**Desde Windows no se puede**: el binario usa cgo dos veces (el driver PKCS#11 y
+AppKit) y eso pide el compilador y los frameworks de Apple. Hay dos caminos y
+hacen lo mismo:
+
+- en una Mac: `installer/macos/build.sh` → `dist/macos/FirmadorGDI-<version>.pkg`;
+- sin Mac: el workflow `.github/workflows/macos.yml`, que corre el mismo script
+  en un runner macOS y deja el `.pkg` como artefacto. El repo es público: no
+  consume minutos.
+
+El workflow además **instala el `.pkg` y abre un link `gdifirma://`** en el
+runner, y mira el log: es la única prueba de que el instalador instala donde
+tiene que instalar y de que el Apple Event llega al programa. Ningún test de Go
+puede ver eso.
+
+El binario es **universal** (arm64 + x86_64). No es por las Macs con Intel
+solamente: el driver del token tiene que ser de la misma arquitectura que el
+proceso, y con un middleware viejo —solo Intel— la salida es abrir FirmadorGDI
+con Rosetta, que necesita la mitad x86_64.
+
+La versión **no se escribe** en ningún archivo de macOS: `Info.plist` y
+`distribution.xml` llevan `__VERSION__` y `build.sh` lo reemplaza leyendo
+`version.go`. Hay un test que falla si alguien pone un número a mano.
+
+### Lo que NO está validado
+
+- **Ningún token se probó en una Mac.** Las rutas de `drivers_darwin.go` salen
+  de la documentación de cada middleware (Feitian, SafeNet, OpenSC). El
+  ePass2003 está validado en Windows, no acá.
+- **El diálogo del PIN no lo vio nadie.** El runner prueba que el link llega y
+  que el programa corta en "token no encontrado"; para llegar al PIN hace falta
+  un token conectado.
+- **Sin firma de Apple** (Developer ID + notarización), al abrir el `.pkg`
+  descargado macOS dice que no puede verificar al desarrollador y hay que
+  habilitarlo en Ajustes → Privacidad y seguridad → "Abrir igualmente". Es el
+  equivalente de SmartScreen, más hostil. `build.sh` ya firma y notariza si se
+  le pasan `FIRMA_APP`, `FIRMA_INSTALADOR` y `NOTARIA_PERFIL`; lo que falta es
+  la cuenta de Apple Developer. Con firma, `entitlements.plist` es obligatorio:
+  sin `disable-library-validation` el programa notarizado no puede cargar el
+  driver del token.
+
 ## Fuera de alcance (a propósito)
 
 - **Auto-update de verdad**: instalar software en una máquina municipal suele
   pedir permisos de administrador, y sin firma Authenticode Windows muestra su
   advertencia en cada actualización. Con el aviso de arriba se cubre el 90% del
   problema a una fracción del costo.
-- **CI en GitHub Actions**: hoy el MSI se compila a mano. Vale la pena cuando
-  haya releases seguidas, no antes.
+- **CI en GitHub Actions para el MSI**: el MSI se sigue compilando a mano. Vale
+  la pena cuando haya releases seguidas, no antes. (El `.pkg` de macOS sí sale
+  de Actions, porque no hay otra forma de compilarlo sin una Mac.)
 - **Firma Authenticode del ejecutable**: hace falta un certificado de firma de
   código. Sin él, Windows SmartScreen sigue mostrando la advertencia al
   instalar. Es una card aparte.
+- **Firma de Apple (Developer ID)**: lo mismo del lado de macOS. Ver arriba.
 
 ## El protocolo cambió en 1.4.0: el PDF ya no viaja (GDI-405)
 
@@ -228,9 +302,10 @@ cmd/firmadorgdi/    main: URI handler, --register, --version
 internal/uri/       parseo de gdifirma:// (parse.go — acá viven rtservlet/stservlet)
 internal/pkcs11/    acceso al token físico
 internal/storage/   subida/bajada contra los servlets del backend
-internal/ui/        diálogos nativos de Windows
-internal/version/   la versión, y el test que la mantiene sincronizada con el MSI
+internal/ui/        diálogos nativos: WPF en Windows, AppKit en macOS
+internal/version/   la versión, y los tests que la atan al MSI y al .pkg
 installer/          WiX v4 (firmadorgdi.wxs)
+installer/macos/    .app + .pkg de macOS (build.sh)
 ```
 
 ## Del lado del servidor

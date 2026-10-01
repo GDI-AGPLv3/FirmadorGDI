@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Solo se usa cuando se firma con Developer ID (build.sh, FIRMA_APP).
+
+  Con el "hardened runtime" —que Apple exige para notarizar— un programa no
+  puede cargar librerías firmadas por otro. El driver PKCS#11 del token ES una
+  librería de otro (Feitian, SafeNet, OpenSC): sin este permiso el firmador
+  quedaría notarizado y sin poder abrir ningún token.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+</dict>
+</plist>

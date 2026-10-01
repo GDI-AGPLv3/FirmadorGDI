@@ -53,7 +53,8 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | Sello visual idéntico a la firma electrónica (Courier, 4 líneas) | ✅ Validado (lo estampa el servidor desde 1.4.0) |
 | El PDF no sale del servidor — al token viaja el digest (GDI-405) | ✅ 1.4.0 |
 | Code signing (Azure Trusted Signing) | ❌ Descartado por ahora |
-| macOS | 🔧 Sprint 3 |
+| macOS — instalador `.pkg`, binario universal (Apple Silicon + Intel) | 🟡 1.8.0 — sin validar con un token real |
+| Firma de Apple (Developer ID + notarización) | ❌ Pendiente: hace falta cuenta de Apple Developer |
 
 ## Compatibilidad
 
@@ -63,6 +64,7 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | SafeNet eToken | Windows | ⏳ Sin probar |
 | YubiKey (PKCS#11) | Windows | ⏳ Sin probar |
 | Cualquier token PKCS#11 estándar | Windows | Debería funcionar |
+| Feitian ePass2003, SafeNet eToken, OpenSC | macOS 12 o posterior | ⏳ Sin probar |
 
 ## Diferencias vs AutoFirma España
 
@@ -72,8 +74,8 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | Runtime | Java 21 requerido | Sin runtime externo |
 | URI scheme | `afirma://` | `gdifirma://` (coexiste) |
 | Formatos | PAdES + CAdES + XAdES | PAdES |
-| Plataformas | Win / Mac / Linux | Windows V1, macOS Sprint 3 |
-| UI | Java Swing | WPF nativo (tema oscuro) |
+| Plataformas | Win / Mac / Linux | Windows y macOS |
+| UI | Java Swing | Nativa: WPF (tema oscuro) en Windows, AppKit en macOS |
 | Visor PDF | Sí | No (está en el sistema de gestión) |
 | Licencia | EUPL 1.1 | AGPL v3 |
 
@@ -101,6 +103,35 @@ CGO_ENABLED=1 go build -ldflags "-s -w -H windowsgui" -o firmadorgdi.exe ./cmd/f
 
 # Registrar URI scheme (una vez por instalación, sin admin)
 .\firmadorgdi.exe --register
+```
+
+### macOS
+
+Requiere macOS 12 o posterior y el driver del token instalado (el que entrega el
+fabricante). El instalador es un `.pkg` que deja `FirmadorGDI.app` en
+`/Applications`; el link `gdifirma://` queda asociado solo.
+
+El `.pkg` **todavía no está publicado** en firmadorgdi.gdilatam.com. Se arma en
+una Mac —o lo arma el workflow `macOS` de este repo, que lo deja como artefacto
+de la corrida—:
+
+```bash
+# Requiere Go 1.26+ y las Command Line Tools de Xcode
+git clone https://github.com/GDI-AGPLv3/FirmadorGDI
+cd FirmadorGDI
+installer/macos/build.sh        # → dist/macos/FirmadorGDI-<version>.pkg
+```
+
+Sin firma de Apple, al abrir el `.pkg` descargado macOS avisa que no puede
+verificar al desarrollador: se habilita en **Ajustes del Sistema → Privacidad y
+seguridad → Abrir igualmente**.
+
+**Si tu organismo tiene GDI en su propio servidor**, un administrador lo autoriza
+en esa Mac (el instalador de Windows lo pregunta; el de macOS no):
+
+```bash
+sudo mkdir -p "/Library/Application Support/GDILatam/FirmadorGDI"
+echo "api.mi-municipio.gob.ar" | sudo tee "/Library/Application Support/GDILatam/FirmadorGDI/HostsAutorizados"
 ```
 
 ## Protocolo
@@ -132,13 +163,15 @@ internal/pkcs11/token.go        PKCS#11: detectar token, login, signer
 internal/storage/digest.go      protocolo CERT:/DIGESTS:/SIGS: (GDI-405)
 internal/ui/dialog.go           tipos compartidos (TokenInfo, PINResult)
 internal/ui/dialog_windows.go   diálogo WPF — tema oscuro (build tag windows)
-internal/ui/dialog_darwin.go    diálogo osascript / Cocoa (build tag darwin)
+internal/ui/dialog_darwin.go    diálogo AppKit + recepción del link por Apple Event (build tag darwin)
+installer/macos/                .app + .pkg de macOS (build.sh)
 installer/                      WiX v7 — MSI sin admin, URI scheme HKCU
 ```
 
 ## Log de depuración
 
-El binario escribe en `%TEMP%\firmadorgdi.log`. Útil para soporte.
+El binario escribe en `%TEMP%\firmadorgdi.log` (Windows) o en
+`~/Library/Logs/FirmadorGDI/firmadorgdi.log` (macOS). Útil para soporte.
 
 ## Licencia
 

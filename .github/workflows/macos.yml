@@ -1,0 +1,88 @@
+name: macOS
+
+# Compila, prueba y empaqueta FirmadorGDI para macOS.
+#
+# Existe porque el .pkg NO se puede armar desde Windows: el binario usa cgo (el
+# driver PKCS#11 del token y AppKit para los diálogos) y eso pide el compilador
+# y los frameworks de Apple. El MSI se sigue compilando a mano; esto es solo la
+# Mac que no tenemos.
+#
+# El instalador queda como artefacto de la corrida (FirmadorGDI-macos). No
+# publica nada: subirlo a firmadorgdi.gdilatam.com sigue siendo un paso manual.
+
+on:
+  push:
+    branches: [dev, hml, main, "feature/**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pkg:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: Armar el .pkg
+        run: installer/macos/build.sh
+
+      # De acá para abajo se prueba el instalador DE VERDAD, en una Mac limpia:
+      # que instala donde tiene que instalar y que el link del navegador llega
+      # al programa. Son las dos cosas que ningún test de Go puede ver.
+
+      - name: Instalar el .pkg
+        run: sudo installer -pkg dist/macos/FirmadorGDI-*.pkg -target /
+
+      # En el runner hay OTRA copia del .app (la de dist/macos/raiz). Si el
+      # paquete fuera reubicable, el instalador habría actualizado esa y
+      # /Applications estaría vacío.
+      - name: Quedó en /Applications y dice su versión
+        run: |
+          test -x /Applications/FirmadorGDI.app/Contents/MacOS/firmadorgdi
+          version="$(sed -n 's/^const Version = "\([0-9.]*\)".*$/\1/p' internal/version/version.go)"
+          dice="$(/Applications/FirmadorGDI.app/Contents/MacOS/firmadorgdi --version)"
+          echo "$dice"
+          test "$dice" = "FirmadorGDI $version"
+
+      # macOS no pasa el link por argv: lo manda como Apple Event. Si el
+      # programa no lo escucha, arranca, no ve nada y no firma. Acá se abre un
+      # link como lo haría el navegador y se mira el log: tiene que haberlo
+      # recibido. Sin token conectado termina en "token no encontrado", que es
+      # lo esperado; el diálogo de error queda abierto y se lo cierra.
+      - name: El link gdifirma:// llega al programa
+        run: |
+          log="$HOME/Library/Logs/FirmadorGDI/firmadorgdi.log"
+          rm -f "$log"
+          open "gdifirma://sign?ver=1_0&fileid=ci&rtservlet=http://localhost:9/rt&stservlet=http://localhost:9/st&id=ci&keystore=PKCS11"
+          llego=""
+          for i in $(seq 1 30); do
+            if grep -q "URI recibida: gdifirma://sign" "$log" 2>/dev/null; then
+              llego=si
+              break
+            fi
+            sleep 1
+          done
+          sleep 2
+          pkill -x firmadorgdi || true
+          echo "----- $log"
+          cat "$log" || true
+          test "$llego" = si
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FirmadorGDI-macos
+          path: dist/macos/FirmadorGDI-*.pkg
+          if-no-files-found: error

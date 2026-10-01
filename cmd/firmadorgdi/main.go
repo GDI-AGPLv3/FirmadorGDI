@@ -12,6 +12,9 @@
 // Ver qué versión está instalada:
 //
 //	firmadorgdi.exe --version
+//
+// En macOS el link no llega por argumento: el sistema abre FirmadorGDI.app sin
+// argumentos y se lo manda como un Apple Event (ver ui.URIDeArranque).
 package main
 
 import (
@@ -22,6 +25,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/gdi-latam/firmadorgdi/internal/hostsconfig"
@@ -30,13 +34,22 @@ import (
 	"github.com/gdi-latam/firmadorgdi/internal/ui"
 	"github.com/gdi-latam/firmadorgdi/internal/uri"
 	"github.com/gdi-latam/firmadorgdi/internal/version"
-	"golang.org/x/sys/windows/registry"
 )
 
 func main() {
 	setupLog()
 
-	if len(os.Args) < 2 {
+	args := os.Args[1:]
+	if len(args) == 0 {
+		// macOS: el navegador no pasa el link por argv. Si no se lo espera acá,
+		// el programa arranca, no ve nada y dice "está instalado" en vez de
+		// firmar. En Windows esto devuelve "" sin esperar.
+		if link := ui.URIDeArranque(); link != "" {
+			args = []string{link}
+		}
+	}
+
+	if len(args) == 0 {
 		ui.ShowInfoDialog(version.Producto, fmt.Sprintf(
 			"FirmadorGDI %s está instalado y listo.\n\nPara firmar documentos, ingresá a tu sistema desde el navegador y hacé clic en \"Firmar\".",
 			version.Version,
@@ -44,7 +57,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	arg := os.Args[1]
+	arg := args[0]
 
 	switch {
 	// GDI-341: sin esto no había forma de saber qué versión tiene instalada un
@@ -278,28 +291,8 @@ func pedirPINYLoguear(
 	return fmt.Errorf("máximo de intentos alcanzado")
 }
 
-func registerURIScheme() error {
-	exePath, _ := os.Executable()
-	exePath, _ = filepath.Abs(exePath)
-	base := `Software\Classes\gdifirma`
-	for path, val := range map[string]string{
-		base:                         "URL:GDI Firma Protocol",
-		base + `\URL Protocol`:       "",
-		base + `\shell\open\command`: fmt.Sprintf(`"%s" "%%1"`, exePath),
-	} {
-		k, _, err := registry.CreateKey(registry.CURRENT_USER, path, registry.SET_VALUE)
-		if err != nil {
-			return err
-		}
-		k.SetStringValue("", val)
-		k.Close()
-	}
-	return nil
-}
-
 func setupLog() {
-	logPath := filepath.Join(os.TempDir(), "firmadorgdi.log")
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(rutaDelLog(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644)
 	if err != nil {
 		return
 	}
@@ -309,4 +302,22 @@ func setupLog() {
 	// manda este log para reportar un problema, deja de hacer falta preguntarle
 	// qué versión tiene.
 	log.Printf("=== %s %s ===", version.Producto, version.Version)
+}
+
+// rutaDelLog es %TEMP%\firmadorgdi.log en Windows y
+// ~/Library/Logs/FirmadorGDI/firmadorgdi.log en macOS.
+//
+// En una Mac el directorio temporal es una ruta por usuario del estilo
+// /var/folders/zz/…/T/, que nadie encuentra por teléfono. ~/Library/Logs es
+// donde macOS espera los logs y se abre desde la app Consola.
+func rutaDelLog() string {
+	if runtime.GOOS == "darwin" {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir := filepath.Join(home, "Library", "Logs", "FirmadorGDI")
+			if os.MkdirAll(dir, 0o755) == nil {
+				return filepath.Join(dir, "firmadorgdi.log")
+			}
+		}
+	}
+	return filepath.Join(os.TempDir(), "firmadorgdi.log")
 }

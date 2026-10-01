@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Guion del instalador de macOS (productbuild). __VERSION__ lo reemplaza build.sh.
+
+  enable_localSystem: se instala para toda la Mac, en /Applications, y por eso
+  el instalador pide la contraseña de un administrador.
+-->
+<installer-gui-script minSpecVersion="2">
+    <title>FirmadorGDI</title>
+    <welcome file="bienvenida.html" mime-type="text/html"/>
+    <license file="license.rtf"/>
+    <conclusion file="listo.html" mime-type="text/html"/>
+    <options customize="never" require-scripts="false" hostArchitectures="arm64,x86_64"/>
+    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>
+    <volume-check>
+        <allowed-os-versions>
+            <os-version min="12.0"/>
+        </allowed-os-versions>
+    </volume-check>
+    <choices-outline>
+        <line choice="default">
+            <line choice="com.gdilatam.firmadorgdi"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="com.gdilatam.firmadorgdi" visible="false">
+        <pkg-ref id="com.gdilatam.firmadorgdi"/>
+    </choice>
+    <pkg-ref id="com.gdilatam.firmadorgdi" version="__VERSION__" onConclusion="none">componente.pkg</pkg-ref>
+</installer-gui-script>

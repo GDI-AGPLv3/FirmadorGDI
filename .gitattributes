@@ -1,0 +1,8 @@
+# Lo que corre en macOS va SIEMPRE con fin de línea Unix, aunque el repo se
+# clone en Windows con autocrlf: con CRLF el shebang queda "#!/bin/sh\r" y el
+# sistema no encuentra el intérprete.
+*.sh text eol=lf
+installer/macos/scripts/* text eol=lf
+*.plist text eol=lf
+installer/macos/distribution.xml text eol=lf
+*.icns binary
