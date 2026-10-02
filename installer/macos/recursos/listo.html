@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, "Helvetica Neue", sans-serif; font-size: 13px; line-height: 1.45; }
+  h1 { font-size: 17px; margin: 0 0 10px 0; }
+  code, pre { font-family: Menlo, monospace; font-size: 11px; }
+  pre { background: #f2f2f2; padding: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<h1>FirmadorGDI quedó instalado</h1>
+<p>Ya podés firmar: entrá a tu sistema desde el navegador y hacé clic en <b>Firmar</b>.
+La primera vez el navegador pregunta si puede abrir FirmadorGDI: aceptá.</p>
+
+<p><b>Solo si tu organismo tiene GDI en su propio servidor</b> (no en la nube de GDI Latam),
+un administrador tiene que autorizarlo desde la Terminal, cambiando el nombre por el suyo:</p>
+<pre>sudo mkdir -p "/Library/Application Support/GDILatam/FirmadorGDI"
+echo "api.mi-municipio.gob.ar" | sudo tee "/Library/Application Support/GDILatam/FirmadorGDI/HostsAutorizados"</pre>
+<p>Solo el nombre del servidor: sin <code>https://</code>, sin barras, sin puerto y sin comodines.
+Si son varios, uno por línea.</p>
+
+<p>Si algo no anda, el registro está en
+<code>~/Library/Logs/FirmadorGDI/firmadorgdi.log</code>.</p>
+</body>
+</html>

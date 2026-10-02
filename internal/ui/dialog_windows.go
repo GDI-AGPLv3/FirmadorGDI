@@ -99,11 +99,6 @@ func runNotifyPS(title, message string, isError bool) {
 	}
 }
 
-// sanitize elimina bytes NUL y recorta espacios — los strings PKCS#11 son C fijos.
-func sanitize(s string) string {
-	return strings.TrimRight(strings.ReplaceAll(s, "\x00", ""), " ")
-}
-
 func boolStr(b bool) string {
 	if b {
 		return "1"

@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"time"
 
 	p11 "github.com/miekg/pkcs11"
 )
@@ -16,12 +18,9 @@ import (
 // ErrTokenLocked se devuelve cuando el token está bloqueado por demasiados PINs incorrectos.
 var ErrTokenLocked = errors.New("token bloqueado por PIN incorrecto demasiadas veces")
 
-// Drivers conocidos. Se prueban en orden hasta encontrar uno que cargue.
-var KnownDrivers = []string{
-	`C:\Windows\System32\eps2003csp11.dll`,  // Feitian ePass2003
-	`C:\Windows\System32\eTPKCS11.dll`,      // SafeNet eToken
-	`C:\Windows\System32\opensc-pkcs11.dll`, // OpenSC (genérico)
-}
+// KnownDrivers (los drivers conocidos, que se prueban en orden hasta encontrar
+// uno que vea un token conectado) está en drivers_<plataforma>.go: las rutas son
+// las del middleware de cada fabricante y no tienen nada en común entre sistemas.
 
 // Token representa una sesión abierta con un token PKCS#11.
 type Token struct {
@@ -30,6 +29,11 @@ type Token struct {
 	privKey p11.ObjectHandle
 	cert    *x509.Certificate
 	certDER []byte
+
+	// mostrado es el certificado cuyos datos vio el funcionario en el diálogo
+	// del PIN, elegido antes del login. Solo para dejar en el log si después se
+	// firma con otro.
+	mostrado *x509.Certificate
 }
 
 // TokenInfo contiene la info legible del token para mostrar en el diálogo.
@@ -41,98 +45,41 @@ type TokenInfo struct {
 	ValidUntil   string // "31/12/2030" — vacío si el cert no es legible sin login
 }
 
-// Open detecta el primer token conectado y abre una sesión.
+// Open detecta el token conectado y abre una sesión.
 // Intenta leer el certificado público (sin login) para poblar SerialNumber y ValidUntil.
+// Con varios certificados en el token muestra el vigente: ver certificado.go.
 // driverPath puede ser "" para autodetectar entre KnownDrivers.
+//
+// Con varios drivers instalados usa el que VE el token, no el primero que
+// carga: ver seleccion.go.
 func Open(driverPath string) (*Token, *TokenInfo, error) {
 	drivers := KnownDrivers
 	if driverPath != "" {
 		drivers = []string{driverPath}
 	}
 
-	var ctx *p11.Ctx
-	for _, d := range drivers {
-		c := p11.New(d)
-		if c == nil {
-			continue
-		}
-		if err := c.Initialize(); err != nil {
-			c.Destroy()
-			continue
-		}
-		ctx = c
-		break
-	}
-	if ctx == nil {
-		return nil, nil, fmt.Errorf("no se encontró driver PKCS#11 compatible")
-	}
-
-	slots, err := ctx.GetSlotList(true)
-	if err != nil || len(slots) == 0 {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("no hay tokens conectados")
-	}
-
-	tokenInfo, err := ctx.GetTokenInfo(slots[0])
+	elegido, err := elegirDriver(drivers, cargarModulo)
 	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("GetTokenInfo: %w", err)
+		return nil, nil, err
 	}
 
-	session, err := ctx.OpenSession(slots[0], p11.CKF_SERIAL_SESSION|p11.CKF_RW_SESSION)
-	if err != nil {
-		ctx.Finalize()
-		ctx.Destroy()
-		return nil, nil, fmt.Errorf("OpenSession: %w", err)
-	}
-
-	t := &Token{ctx: ctx, session: session}
+	t := &Token{ctx: elegido.mod.(ctxModulo).Ctx, session: elegido.session}
 	info := &TokenInfo{
-		Label:        tokenInfo.Label,
-		Manufacturer: tokenInfo.ManufacturerID,
+		Label:        elegido.info.Label,
+		Manufacturer: elegido.info.ManufacturerID,
 	}
 
-	// CKO_CERTIFICATE son objetos públicos — intentar leer sin login para poblar el diálogo.
-	_ = t.tryReadPublicCert(info) // error no es fatal, se lee tras login en loadCertAndKey
+	// CKO_CERTIFICATE son objetos públicos: se leen sin login para poblar el
+	// diálogo. Si el token no los muestra todavía, el diálogo sale sin esos datos
+	// y el certificado se lee tras el login en loadCertAndKey.
+	if c := elegirCertificado(leerCertificados(t.ctx, t.session), time.Now()); c != nil {
+		t.mostrado = c.cert
+		info.Subject = c.cert.Subject.CommonName
+		info.SerialNumber = c.cert.Subject.SerialNumber
+		info.ValidUntil = c.cert.NotAfter.Local().Format("02/01/2006")
+	}
 
 	return t, info, nil
-}
-
-// tryReadPublicCert intenta leer el certificado sin login (objetos públicos en PKCS#11).
-// Popula info.Subject, info.SerialNumber e info.ValidUntil si tiene éxito.
-func (t *Token) tryReadPublicCert(info *TokenInfo) error {
-	t.ctx.FindObjectsInit(t.session, []*p11.Attribute{
-		p11.NewAttribute(p11.CKA_CLASS, p11.CKO_CERTIFICATE),
-	})
-	certs, _, err := t.ctx.FindObjects(t.session, 10)
-	t.ctx.FindObjectsFinal(t.session)
-
-	if err != nil || len(certs) == 0 {
-		return fmt.Errorf("no hay certs legibles sin login")
-	}
-
-	attrs, err := t.ctx.GetAttributeValue(t.session, certs[0], []*p11.Attribute{
-		p11.NewAttribute(p11.CKA_VALUE, nil),
-	})
-	if err != nil {
-		return fmt.Errorf("GetAttributeValue: %w", err)
-	}
-
-	cert, err := x509.ParseCertificate(attrs[0].Value)
-	if err != nil {
-		return fmt.Errorf("ParseCertificate: %w", err)
-	}
-
-	// Guardar para reusar en loadCertAndKey (evita releer tras login).
-	t.certDER = attrs[0].Value
-	t.cert = cert
-
-	info.Subject = cert.Subject.CommonName
-	info.SerialNumber = cert.Subject.SerialNumber
-	info.ValidUntil = cert.NotAfter.Local().Format("02/01/2006")
-	return nil
 }
 
 // Login autentica con el PIN del usuario.
@@ -151,44 +98,27 @@ func (t *Token) Login(pin string) error {
 	return t.loadCertAndKey()
 }
 
+// loadCertAndKey elige con qué certificado se firma y se queda con SU clave.
+// Con un certificado viejo y uno renovado en el mismo token no es el primero
+// que aparece: ver certificado.go.
 func (t *Token) loadCertAndKey() error {
-	// Si tryReadPublicCert ya cargó el cert, solo necesitamos la clave privada.
-	if t.cert == nil {
-		t.ctx.FindObjectsInit(t.session, []*p11.Attribute{
-			p11.NewAttribute(p11.CKA_CLASS, p11.CKO_CERTIFICATE),
-		})
-		certs, _, _ := t.ctx.FindObjects(t.session, 10)
-		t.ctx.FindObjectsFinal(t.session)
+	// Se vuelve a leer todo: recién con login se ven las claves privadas, y hay
+	// tokens que tampoco muestran antes los certificados.
+	certs := leerCertificados(t.ctx, t.session)
+	claves := leerClaves(t.ctx, t.session)
 
-		if len(certs) == 0 {
-			return fmt.Errorf("no se encontró certificado en el token")
-		}
-
-		attrs, err := t.ctx.GetAttributeValue(t.session, certs[0], []*p11.Attribute{
-			p11.NewAttribute(p11.CKA_VALUE, nil),
-		})
-		if err != nil {
-			return fmt.Errorf("GetAttributeValue cert: %w", err)
-		}
-		t.certDER = attrs[0].Value
-		cert, err := x509.ParseCertificate(t.certDER)
-		if err != nil {
-			return fmt.Errorf("ParseCertificate: %w", err)
-		}
-		t.cert = cert
+	elegido, clave, err := elegirCertYClave(certs, claves, time.Now())
+	if err != nil {
+		return err
+	}
+	if t.mostrado != nil && !t.mostrado.Equal(elegido.cert) {
+		log.Printf("el certificado con el que se firma (vence el %s) no es el que mostró el diálogo del PIN",
+			elegido.cert.NotAfter.Local().Format("02/01/2006"))
 	}
 
-	// Leer handle de clave privada (requiere login).
-	t.ctx.FindObjectsInit(t.session, []*p11.Attribute{
-		p11.NewAttribute(p11.CKA_CLASS, p11.CKO_PRIVATE_KEY),
-	})
-	keys, _, _ := t.ctx.FindObjects(t.session, 5)
-	t.ctx.FindObjectsFinal(t.session)
-
-	if len(keys) == 0 {
-		return fmt.Errorf("no se encontró clave privada en el token")
-	}
-	t.privKey = keys[0]
+	t.cert = elegido.cert
+	t.certDER = elegido.der
+	t.privKey = clave
 	return nil
 }
 

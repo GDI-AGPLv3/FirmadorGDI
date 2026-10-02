@@ -1,6 +1,7 @@
 package hostsconfig
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,5 +75,64 @@ func TestLimpiarDescartaVaciosYEspacios(t *testing.T) {
 	got := limpiar([]string{"  api.muni.gob.ar ", "", "   ", "otro.muni.gob.ar"})
 	if len(got) != 2 || got[0] != "api.muni.gob.ar" || got[1] != "otro.muni.gob.ar" {
 		t.Errorf("limpiar() = %v", got)
+	}
+}
+
+// ── macOS ───────────────────────────────────────────────────────────────────
+
+// En macOS no hay HKLM: lo que hace segura a la lista es que el archivo —y la
+// carpeta donde está— sean de root y no los pueda escribir nadie más. Si esta
+// función afloja, cualquier cosa que corra como el funcionario se autoriza
+// sola: FG-001 con pasos extra, igual que un valor en HKCU.
+func TestEnMacSoloValeLoQueEscribeRoot(t *testing.T) {
+	casos := []struct {
+		nombre string
+		uid    uint32
+		modo   fs.FileMode
+		vale   bool
+	}{
+		{"archivo de root 644", 0, 0o644, true},
+		{"carpeta de root 755", 0, fs.ModeDir | 0o755, true},
+		{"del propio usuario", 501, 0o644, false},
+		{"de root pero lo escribe el grupo", 0, 0o664, false},
+		{"de root pero lo escribe cualquiera", 0, 0o646, false},
+		{"carpeta de root abierta a todos", 0, fs.ModeDir | 0o777, false},
+		// Con 755 a propósito: con 777 lo rechazarían los permisos y el caso
+		// no probaría que un enlace se rechaza POR SER enlace.
+		{"enlace simbólico de root", 0, fs.ModeSymlink | 0o755, false},
+	}
+	for _, c := range casos {
+		err := soloLoEscribeRoot(c.uid, c.modo)
+		if c.vale && err != nil {
+			t.Errorf("%s: tendría que valer y se rechaza: %v", c.nombre, err)
+		}
+		if !c.vale && err == nil {
+			t.Errorf("%s: se ACEPTA y no tendría que valer", c.nombre)
+		}
+	}
+}
+
+func TestElArchivoDeMacSeLeeLineaPorLinea(t *testing.T) {
+	got := limpiar(hostsDeTexto("# servidor del municipio\napi.muni.gob.ar\r\n\n  otro.muni.gob.ar ; tercero.muni.gob.ar\n"))
+	want := []string{"api.muni.gob.ar", "otro.muni.gob.ar", "tercero.muni.gob.ar"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("hostsDeTexto() = %v, se esperaba %v", got, want)
+	}
+}
+
+// La última pantalla del instalador de macOS le dice al administrador dónde
+// escribir el servidor. Si esa ruta y la que lee Leer() se separan, el
+// municipio sigue las instrucciones al pie de la letra y no puede firmar.
+func TestElInstaladorDeMacDocumentaLaRutaQueSeLee(t *testing.T) {
+	ruta := filepath.Join("..", "..", "installer", "macos", "recursos", "listo.html")
+	b, err := os.ReadFile(ruta)
+	if err != nil {
+		t.Fatalf("no se pudo leer %s: %v", ruta, err)
+	}
+	if !strings.Contains(string(b), `sudo tee "`+RutaArchivoMac+`"`) {
+		t.Errorf("listo.html no manda a escribir %q con sudo", RutaArchivoMac)
+	}
+	if !strings.HasPrefix(RutaArchivoMac, "/Library/") {
+		t.Errorf("RutaArchivoMac tiene que estar bajo /Library (de root) y dice %q", RutaArchivoMac)
 	}
 }

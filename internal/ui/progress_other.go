@@ -2,7 +2,8 @@
 
 package ui
 
-// En las plataformas que todavía no tienen UI nativa (ver dialog_darwin.go), el
-// avance queda solo en el log. No es una limitación de la tanda: el firmador
-// entero es Windows-first.
+// Fuera de Windows el avance de la tanda queda solo en el log. En macOS los
+// diálogos son nativos (dialog_darwin.go) pero no hay una ventana a la que
+// cambiarle el título mientras se firma: una tanda son 5 documentos y termina
+// antes de que haga falta.
 func tituloDeVentana(actual, total int) {}

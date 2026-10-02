@@ -1,0 +1,23 @@
+#!/bin/sh
+# Corre como root al terminar la instalación.
+#
+# macOS registra solo quién atiende gdifirma:// cuando el .app aparece en
+# /Applications, pero a veces tarda: el funcionario instala, va derecho a firmar
+# y el navegador dice que no hay nada que abra ese link. Esto fuerza el registro
+# para el usuario que está sentado frente a la Mac.
+#
+# Nunca hace fallar la instalación: si no hay nadie con sesión abierta (una
+# instalación remota, por ejemplo) no hace nada, y el sistema lo registra igual
+# cuando ese usuario entre.
+
+APP="/Applications/FirmadorGDI.app"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+
+usuario=$(/usr/bin/stat -f%Su /dev/console 2>/dev/null)
+uid=$(/usr/bin/id -u "$usuario" 2>/dev/null)
+
+if [ -n "$uid" ] && [ "$uid" != "0" ] && [ -x "$LSREGISTER" ]; then
+	/bin/launchctl asuser "$uid" /usr/bin/sudo -u "$usuario" "$LSREGISTER" -f "$APP" >/dev/null 2>&1 || true
+fi
+
+exit 0
