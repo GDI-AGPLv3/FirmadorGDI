@@ -107,3 +107,24 @@ func TestLosScriptsDeMacNoSeConviertenACRLF(t *testing.T) {
 		}
 	}
 }
+
+// Go linkea TODO archivo .syso que encuentra en la carpeta del paquete, en
+// cualquier sistema, salvo que el nombre termine en _<sistema>. El ícono del
+// .exe es un recurso de Windows: sin el sufijo, en macOS el linker lo recibe,
+// no lo entiende ("unknown file type") y el programa no compila. Pasó con la
+// primera corrida del workflow de macOS: el archivo se llamaba firmadorgdi.syso.
+func TestLosRecursosDeWindowsNoSeLinkeanEnOtrosSistemas(t *testing.T) {
+	recursos, err := filepath.Glob(filepath.Join("..", "..", "cmd", "firmadorgdi", "*.syso"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recursos) == 0 {
+		t.Fatal("no se encontró el .syso con el ícono del .exe: el test quedó mirando otra carpeta")
+	}
+	for _, r := range recursos {
+		nombre := strings.TrimSuffix(filepath.Base(r), ".syso")
+		if !strings.HasSuffix(nombre, "_windows") && !strings.Contains(nombre, "_windows_") {
+			t.Errorf("%s no dice _windows en el nombre: se linkea también en macOS y rompe el build", filepath.Base(r))
+		}
+	}
+}
