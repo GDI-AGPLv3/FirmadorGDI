@@ -204,6 +204,38 @@ La decisión está cubierta por tests con drivers de mentira
 (`seleccion_test.go`). **No está probada con dos middlewares reales**: hace
 falta una PC con los dos instalados y el token del segundo enchufado.
 
+## Con qué certificado se firma cuando el token tiene varios (1.8.0)
+
+Se firma con **el certificado vigente que tiene su clave privada en el token, y
+con ESA clave** (`internal/pkcs11/certificado.go`). Hasta la 1.7.0 se usaba el
+primer certificado y la primera clave que devolvía el token, sin mirar nada: un
+funcionario que renueva el certificado se queda con los dos en el mismo token
+—el viejo no se borra y suele ser el primero—, el programa firmaba con el viejo
+y el servidor rechazaba con *"certificado vencido"* a alguien que tenía uno
+vigente enchufado. Pasó en producción el 02/10/2026.
+
+- Se leen **todos** los certificados y **todas** las claves (antes, una sola
+  tanda de 10 objetos).
+- Solo compiten los certificados que tienen clave en el token: los de la cadena
+  (AC raíz, AC emisora) viajan en el token y no la tienen.
+- Gana el vigente; entre iguales, **el que vence más tarde**. Ese desempate es
+  lo que hace que el resultado no dependa del reloj de la PC: con la fecha de la
+  máquina en cualquier año, entre el viejo y el renovado gana el renovado.
+- La clave se empareja por el **módulo RSA** (la verdad) y, si el driver no lo
+  deja leer, por `CKA_ID`. Elegir bien el certificado y firmar con la clave del
+  otro da una firma que no valida.
+- Un certificado vencido **no se corta acá**: se presenta y rechaza el
+  servidor, que es el que tiene el reloj bueno. Queda avisado en el log.
+- El diálogo del PIN se arma antes del login (las claves todavía no se ven) y
+  elige con la misma regla, así que muestra el vencimiento del renovado. Si
+  después del login se termina firmando con otro, el log lo dice.
+- Con varias claves y un token que no informa ni módulo ni `CKA_ID` no se
+  adivina: corta con error. Con una sola clave sigue como siempre.
+
+Cubierto por tests con un token de mentira (`certificado_test.go`), que fallan
+contra la lógica de la 1.7.0. **No está probado con un token real que tenga dos
+certificados**: es lo primero que hay que validar con el firmante que lo reportó.
+
 ## macOS (1.8.0)
 
 El mismo programa, con tres diferencias que no son de forma:

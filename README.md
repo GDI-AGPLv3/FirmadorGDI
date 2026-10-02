@@ -53,6 +53,7 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | Sello visual idéntico a la firma electrónica (Courier, 4 líneas) | ✅ Validado (lo estampa el servidor desde 1.4.0) |
 | El PDF no sale del servidor — al token viaja el digest (GDI-405) | ✅ 1.4.0 |
 | Code signing (Azure Trusted Signing) | ❌ Descartado por ahora |
+| Token con certificado viejo y renovado: se firma con el vigente | 🟡 1.8.0 — sin validar con un token real |
 | macOS — instalador `.pkg`, binario universal (Apple Silicon + Intel) | 🟡 1.8.0 — sin validar con un token real |
 | Firma de Apple (Developer ID + notarización) | ❌ Pendiente: hace falta cuenta de Apple Developer |
 
