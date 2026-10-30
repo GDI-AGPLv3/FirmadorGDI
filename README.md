@@ -55,6 +55,7 @@ Chrome  →  gdifirma://sign?...  →  FirmadorGDI.exe
 | Code signing (Azure Trusted Signing) | ❌ Descartado por ahora |
 | Token con certificado viejo y renovado: se firma con el vigente | 🟡 1.8.0 — sin validar con un token real |
 | macOS — instalador `.pkg`, binario universal (Apple Silicon + Intel) | 🟡 1.8.0 — sin validar con un token real |
+| Servidor propio cargado al instalar, leído en Windows de 64 bits (el MSI de 32 lo deja en `WOW6432Node`) | ✅ 1.8.1 |
 | Firma de Apple (Developer ID + notarización) | ❌ Pendiente: hace falta cuenta de Apple Developer |
 
 ## Compatibilidad
