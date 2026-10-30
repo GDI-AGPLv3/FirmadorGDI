@@ -136,3 +136,79 @@ func TestElInstaladorDeMacDocumentaLaRutaQueSeLee(t *testing.T) {
 		t.Errorf("RutaArchivoMac tiene que estar bajo /Library (de root) y dice %q", RutaArchivoMac)
 	}
 }
+
+// ── Windows: las dos vistas del registro (GDI-804A) ────────────────────────
+
+func vistaFija(nombre string, hosts []string, ok bool) vista {
+	return vista{nombre, func() ([]string, bool) { return hosts, ok }}
+}
+
+// El MSI es de 32 bits: en un Windows de 64 el valor queda en WOW6432Node, la
+// vista de 32. Con la de 64 vacía, lo de la de 32 TIENE que llegar. Es el caso
+// que se vio en la PC A el 30/10 con la 1.8.0.
+func TestSiSoloEstaEnLaVistaDe32SeLee(t *testing.T) {
+	got := unirVistas(
+		vistaFija("64", nil, false),
+		vistaFija("32", []string{"enlace-dev.gdi.lat"}, true),
+	)
+	if strings.Join(got, "|") != "enlace-dev.gdi.lat" {
+		t.Errorf("unirVistas() = %v, se esperaba el host de la vista de 32", got)
+	}
+}
+
+func TestSiSoloEstaEnLaVistaDe64SeLee(t *testing.T) {
+	got := unirVistas(
+		vistaFija("64", []string{"api.muni.gob.ar"}, true),
+		vistaFija("32", nil, false),
+	)
+	if strings.Join(got, "|") != "api.muni.gob.ar" {
+		t.Errorf("unirVistas() = %v", got)
+	}
+}
+
+// Si hay valor en las dos (el MSI en una, un administrador a mano en la otra)
+// se suman, primero la de 64, y un host repetido cuenta una vez.
+func TestConValorEnLasDosVistasSeSumanSinRepetir(t *testing.T) {
+	got := unirVistas(
+		vistaFija("64", []string{"api.muni.gob.ar", " otro.muni.gob.ar "}, true),
+		vistaFija("32", []string{"otro.muni.gob.ar", "", "tercero.muni.gob.ar"}, true),
+	)
+	want := []string{"api.muni.gob.ar", "otro.muni.gob.ar", "tercero.muni.gob.ar"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("unirVistas() = %v, se esperaba %v", got, want)
+	}
+}
+
+func TestSinValorEnNingunaVistaNoHayHosts(t *testing.T) {
+	if got := unirVistas(vistaFija("64", nil, false), vistaFija("32", nil, false)); len(got) != 0 {
+		t.Errorf("sin valor en ninguna vista se esperaba vacío y vino %v", got)
+	}
+}
+
+// unirVistas NO valida: lo que trae pasa igual por uri.AgregarHostsAutorizados,
+// que rechaza sufijos y comodines. Este test fija que no se "arregle" nada acá
+// en silencio (un sufijo sigue llegando tal cual a la validación, que lo tira).
+func TestUnirVistasNoTocaLoQueValidaURI(t *testing.T) {
+	got := unirVistas(vistaFija("32", []string{".fly.dev", "*.muni.gob.ar"}, true))
+	if strings.Join(got, "|") != ".fly.dev|*.muni.gob.ar" {
+		t.Errorf("unirVistas() = %v", got)
+	}
+}
+
+// Leer() en Windows tiene que pedir las DOS vistas. Si alguien saca la de 32,
+// los municipios con el MSI de 32 bits vuelven a quedar sin poder firmar.
+func TestEnWindowsSeLeenLasDosVistas(t *testing.T) {
+	b, err := os.ReadFile("hostsconfig_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	for _, flag := range []string{"registry.WOW64_64KEY", "registry.WOW64_32KEY"} {
+		if !strings.Contains(s, flag) {
+			t.Errorf("hostsconfig_windows.go no lee la vista %s", flag)
+		}
+	}
+	if !strings.Contains(s, "registry.LOCAL_MACHINE") || strings.Contains(s, "registry.CURRENT_USER") {
+		t.Error("la lista se lee solo de HKLM: HKCU la escribe el propio usuario (FG-001)")
+	}
+}

@@ -57,6 +57,42 @@ const NombreValor = "HostsAutorizados"
 // RutaArchivoMac es dónde vive la lista en macOS: un host por línea.
 const RutaArchivoMac = "/Library/Application Support/GDILatam/FirmadorGDI/" + NombreValor
 
+// vista es un lugar donde puede estar la lista. En Windows son las dos vistas
+// del registro (64 y 32 bits, ver hostsconfig_windows.go). Vive acá, sin build
+// tag, para que la regla de cómo se suman se pruebe en cualquier máquina.
+type vista struct {
+	nombre string
+	// leer devuelve los hosts crudos; false si en esa vista no hay nada.
+	leer func() ([]string, bool)
+}
+
+// unirVistas suma los hosts de todas las vistas, en orden y sin repetir. Un
+// host que aparece en dos vistas cuenta una vez. No valida nada: lo que sale
+// de acá pasa igual por limpiar() y por uri.AgregarHostsAutorizados, que es
+// la que rechaza sufijos, comodines, esquemas y puertos (FG-001).
+func unirVistas(vistas ...vista) []string {
+	var out []string
+	vistos := map[string]bool{}
+	for _, v := range vistas {
+		hosts, ok := v.leer()
+		if !ok {
+			continue
+		}
+		// Al log, de qué vista salió cada lista: es lo primero que se pregunta
+		// cuando un municipio dice que reinstaló y sigue sin poder firmar.
+		log.Printf("hosts de la instalación en la vista de %s: %v", v.nombre, hosts)
+		for _, h := range hosts {
+			h = strings.TrimSpace(h)
+			if h == "" || vistos[h] {
+				continue
+			}
+			vistos[h] = true
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
 func limpiar(valores []string) []string {
 	out := make([]string, 0, len(valores))
 	for _, v := range valores {

@@ -22,7 +22,7 @@ package version
 // El instalador de macOS no lleva la versión escrita: installer/macos/build.sh
 // la lee de esta línea. Si se cambia la forma de la declaración, el build de
 // macOS corta con "no se pudo leer la versión".
-const Version = "1.8.0"
+const Version = "1.8.1"
 
 // Nombre del producto tal como aparece en los diálogos y en el instalador.
 const Producto = "FirmadorGDI"
