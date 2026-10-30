@@ -3,6 +3,8 @@
 package hostsconfig
 
 import (
+	"errors"
+	"log"
 	"strings"
 
 	"golang.org/x/sys/windows/registry"
@@ -10,8 +12,10 @@ import (
 
 const origen = RutaRegistro + `\` + NombreValor
 
-// claveRegistro es RutaRegistro sin el "HKLM\": lo que recibe OpenKey.
-const claveRegistro = `SOFTWARE\GDILatam\FirmadorGDI`
+// claveRegistro es RutaRegistro sin el "HKLM\": lo que recibe OpenKey. Sale de
+// RutaRegistro para que la ruta exista en UN solo lugar (la que el test compara
+// con el instalador).
+var claveRegistro = strings.TrimPrefix(RutaRegistro, `HKLM\`)
 
 // Leer devuelve los hosts que el administrador autorizó al instalar.
 //
@@ -49,7 +53,12 @@ func Leer() []string {
 func leerVista(raiz registry.Key, clave string, vistaWOW64 uint32) ([]string, bool) {
 	k, err := registry.OpenKey(raiz, clave, registry.QUERY_VALUE|vistaWOW64)
 	if err != nil {
-		// Lo normal en una instalación SaaS: la clave no existe.
+		// Lo normal en una instalación SaaS: la clave no existe. Cualquier otro
+		// error (acceso denegado, por ejemplo) también deja la lista sin estos
+		// hosts —falla del lado seguro—, pero queda en el log para soporte.
+		if !errors.Is(err, registry.ErrNotExist) {
+			log.Printf("no se pudo abrir %s: %v", clave, err)
+		}
 		return nil, false
 	}
 	defer k.Close()

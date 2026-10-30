@@ -50,6 +50,11 @@ haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 > El host queda en `HKLM\SOFTWARE\GDILatam\FirmadorGDI`, valor `HostsAutorizados`, que
 > **pide permisos de administrador**: el MSI corre elevado y puede escribirlo; el
 > funcionario después no. Para cambiarlo, se reinstala.
+> En Windows de 64 bits el MSI (que es de 32) lo deja en
+> `HKLM\SOFTWARE\WOW6432Node\GDILatam\FirmadorGDI`: desde la 1.8.1 el programa
+> lee las dos vistas y suma los hosts (GDI-804A). Hasta la 1.8.0 solo miraba la
+> de 64 y el servidor propio se rechazaba. Al actualizar, el MSI NO recuerda el
+> servidor: hay que volver a elegir «propio» o pasar `SERVIDORGDI`.
 >
 > Por eso HKLM y no un archivo junto al .exe, ni una variable de entorno, ni HKCU:
 > esos tres los escribe el propio usuario, y con cualquiera de ellos algo que corra
