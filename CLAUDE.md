@@ -22,7 +22,10 @@ haya entrado. Por eso se publica **un solo instalador**, el de PRD.
 > `HostsPermitidos` (en `internal/uri/parse.go`) es la lista de hosts a los
 > que el programa le obedece, **escritos completos y comparados exactos**: los
 > cuatro backends (`gdi-backend-dev`, `demo-backend-prd`, `aries-backend-prd`,
-> `arg-backend-prd`, todos `.fly.dev`), `enlace.gdilatam.com` y local. Existe
+> `arg-backend-prd`, todos `.fly.dev`), `enlace.gdilatam.com` y local. (Los
+> cuatro `.fly.dev` siguen en la lista aunque Fly está apagado, de respaldo,
+> desde el 11/11/2026 (D-195A): hoy los ambientes corren en las VMs de Oracle.
+> Sacarlos es un cambio de código y va en otra card.) Existe
 > porque, una vez instalado, **cualquier página que el funcionario abra puede
 > lanzar un `gdifirma://`** — y las URLs del servidor viajan dentro del link.
 > Sin la lista, un link ajeno lograba que el token firmara documentos que el
